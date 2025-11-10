@@ -1,7 +1,7 @@
 import subprocess
-import sys
 import argparse
 import os
+import re
 
 def simulate():
     '''
@@ -13,7 +13,8 @@ def simulate():
     parser = argparse.ArgumentParser(description="处理模块名、测试平台名和RTL文件名")
     parser.add_argument("module_name", type=str, help="模块名")
     parser.add_argument("testbench_name", type=str, help="测试平台名")
-    parser.add_argument("rtl_files", nargs="+", help="RTL文件名列表")
+    parser.add_argument("rtl_file", type=str, help="RTL文件名")
+    parser.add_argument("submodule_id", nargs="*", help="子模块id")
 
     args = parser.parse_args()
 
@@ -24,8 +25,28 @@ def simulate():
     iverilog_cmd += ['-s', args.module_name]
 
     iverilog_cmd.append('./Test/' + args.testbench_name)
-    for RTL in args.rtl_files:
-        iverilog_cmd.append('./RTL/' + RTL)
+    iverilog_cmd.append('./RTL/' + args.rtl_file)
+
+    SubModules = {
+        '1 ': 'Multiplexer.v',
+        '2 ': 'Decoder.v',
+        '3 ': 'Encoder.v',
+        '4 ': 'FullAdder.v',
+        '5 ': 'RippleCarryAdder.v',
+        '6 ': 'CarryLookaheadAdder.v',
+        '7 ': 'ArrayMultiplier.v',
+        '8 ': 'Comparator.v',
+        '9 ': 'DFlipFlop.v',
+        '10 ': 'Register.v',
+        '11 ': 'ShiftRegister.v',
+        '12 ': 'Counter.v',
+        '13 ': 'FIFO.v',
+        '14 ': 'ClockDivider.v',
+        '15 ': 'Synchronizer.v'
+    }
+
+    for id in args.submodule_id:
+        iverilog_cmd.append( os.path.join( './RTL/SubModule', SubModules[id] ) )
 
     # print(iverilog_cmd)
 
@@ -34,7 +55,7 @@ def simulate():
     combined_output = result.stdout + result.stderr
     print(combined_output)
 
-    # 执行仿真
+
     vvp_cmd = [r'vvp', r'Out/out.vvp']
     result = subprocess.run(vvp_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     combined_output = result.stdout + result.stderr

@@ -356,6 +356,8 @@ OutputNode: [OutputNode]
 
 Specification: [Specification]
 
+TestBench: [TestSpec]
+
 
 ### Tips
 Here is some tips that you need to follow:

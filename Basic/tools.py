@@ -35,6 +35,6 @@ def replace_prompt(text: str, replacements: dict, is_print: bool=True)->str:
             text = text.replace(placeholder, value)
     
     if is_print:
-        print(f"Prompt:\n {text}")
+        print(f"Prompt:\n{text}")
     
     return text
