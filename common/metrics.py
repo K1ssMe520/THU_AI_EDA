@@ -34,6 +34,31 @@ def _sta_executable() -> str | None:
     return shutil.which("sta")
 
 
+def _sta_safe_netlist(netlist_path: Path) -> Path:
+    """把 Yosys 网表转换成 OpenSTA 的 Verilog 解析器能接受的写法。
+
+    Yosys 会把模块内 function 的局部变量写成带源文件路径的转义标识符
+    （例如 ``\\func$1/path/file.sv:12$3.c``），并给整型循环变量生成
+    ``wire signed``。OpenSTA 的解析器对这两类写法都不兼容。这里统一把
+    转义标识符重命名为 ``\\esc_N``，并去掉网表内部的 ``signed`` 关键字；
+    标准单元网表本身不依赖有符号性，因此不影响功耗分析。
+    """
+    text = netlist_path.read_text(encoding="utf-8")
+    rename: dict[str, str] = {}
+
+    def replace_identifier(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if token not in rename:
+            rename[token] = f"\\esc_{len(rename)} "
+        return rename[token]
+
+    text = re.sub(r"\\[^\s]+", replace_identifier, text)
+    text = re.sub(r"\b(wire|reg)\s+signed\b", r"\1", text)
+    safe_path = netlist_path.with_name("mapped_sta.v")
+    safe_path.write_text(text, encoding="utf-8")
+    return safe_path
+
+
 def _mapped_netlist(rtl_path: Path, library_path: Path, top_module: str, work_dir: Path) -> tuple[Path, float]:
     """将 RTL 映射为标准单元网表，并返回 Liberty 面积。"""
     netlist_path = work_dir / "mapped.v"
@@ -59,7 +84,7 @@ def _mapped_netlist(rtl_path: Path, library_path: Path, top_module: str, work_di
     match = re.search(r"Chip area for module '\\?[^']+':\s*([0-9.]+)", output)
     if result.returncode != 0 or match is None or not netlist_path.is_file():
         raise RuntimeError(f"Yosys 未能完成标准单元映射。\n{output[-4000:]}")
-    return netlist_path, float(match.group(1))
+    return _sta_safe_netlist(netlist_path), float(match.group(1))
 
 
 def _parse_power_report(report: str) -> dict[str, float] | None:

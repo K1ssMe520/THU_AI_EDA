@@ -16,12 +16,19 @@ module tb_power_classroom_seq1011;
   always #5 clk = ~clk;
 
   task automatic send_bit(input logic bit_value, input logic ready_value);
+    integer guard;
     begin
       @(negedge clk);
       out_ready = ready_value;
       in_valid = 1;
       in_bit = bit_value;
-      do @(posedge clk); while (!in_ready);
+      // 允许设计在反压时暂停接收；最多等 32 拍，避免功耗采样卡死。
+      guard = 0;
+      @(posedge clk);
+      while (!in_ready && guard < 32) begin
+        @(posedge clk);
+        guard = guard + 1;
+      end
       @(negedge clk);
       in_valid = 0;
     end

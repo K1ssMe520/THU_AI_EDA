@@ -15,10 +15,16 @@ TASKS = {
     "classroom_seq1011": {
         "directory": "prompt_optimization/tasks/classroom_seq1011",
         "testbench_top": "tb_classroom_seq1011",
+        "power_testbench_top": "tb_power_classroom_seq1011",
     },
     "homework_sync_fifo": {
         "directory": "prompt_optimization/tasks/homework_sync_fifo",
         "testbench_top": "tb_homework_sync_fifo",
+    },
+    "homework_aes128": {
+        "directory": "prompt_optimization/tasks/homework_aes128",
+        "testbench_top": "tb_homework_aes128",
+        "power_testbench_top": "tb_power_homework_aes128",
     },
 }
 
@@ -33,6 +39,15 @@ def _task_paths(task_name: str) -> tuple[Path, Path, str]:
     task = TASKS[task_name]
     task_dir = PROJECT_ROOT / task["directory"]
     return task_dir / "spec.md", task_dir / "tb.sv", task["testbench_top"]
+
+
+def _power_paths(task_name: str) -> tuple[Path | None, str | None]:
+    task = TASKS[task_name]
+    power_testbench_top = task.get("power_testbench_top")
+    if not power_testbench_top:
+        return None, None
+    task_dir = PROJECT_ROOT / task["directory"]
+    return task_dir / "power_tb.sv", power_testbench_top
 
 
 def _print_json(value: Any) -> None:
@@ -74,6 +89,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "run":
         spec_path, testbench_path, testbench_top = _task_paths(args.task)
+        power_testbench_path, power_testbench_top = _power_paths(args.task)
         prompt_path = Path(args.prompt)
         if not prompt_path.is_absolute():
             prompt_path = PROJECT_ROOT / "prompt_optimization" / "prompts" / prompt_path
@@ -82,6 +98,8 @@ def main(argv: list[str] | None = None) -> int:
             spec_path=spec_path,
             testbench_path=testbench_path,
             testbench_top=testbench_top,
+            power_testbench_path=power_testbench_path,
+            power_testbench_top=power_testbench_top,
             prompt_path=prompt_path,
             run_id=args.run_id,
             temperature=args.temperature,

@@ -5,6 +5,7 @@ from .runner import (
     create_run,
     retest_run,
     run_prompt_experiment,
+    save_generation_run,
     summarize_task,
     test_rtl,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "create_run",
     "retest_run",
     "run_prompt_experiment",
+    "save_generation_run",
     "summarize_task",
     "test_rtl",
 ]

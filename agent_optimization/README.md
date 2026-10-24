@@ -1,22 +1,68 @@
 # Agent 优化实验
 
-本目录实现了一个可视化、可运行的最小 EDA 自动设计 Agent。启动顶层的 `make web`，打开 Agent 选项卡即可拖动组件搭建流程、点击节点编辑该步骤的 Prompt，并在同一个执行窗口检查每个步骤的实际输入与输出。
+本目录实现一个固定流程的最小 EDA 自动设计 Agent。启动顶层 `make web`，打开 Agent 选项卡即可查看固定的 Agent 设计，并运行、回看每次执行过程。流程定义在代码中，网页只做只读展示，不提供在线编辑。
 
-默认流程是：
+## 固定流程
 
 ```text
-Design Spec → RTL Designer → Compile & TB → Result Summary
+任务 Spec（固定输入）
+   │
+   ▼
+Parser ── Spec 不充分 → 页面输入框补充 → 重新评估（最多 3 轮）
+   │
+   ▼
+RTL Planner ── 规划模块结构 / 文件结构
+   │
+   ▼
+Coder ── 逐个文件生成 RTL
+   │
+   ▼
+Tester ── 编译全部 RTL + 教师 TB + 面积/功耗
+   │ PASS
+   ├──────────────→ Result Summary（固定输出）
+   │ FAIL
+   ▼
+Modifier ── 修复 RTL ──→ Tester（最多 3 轮测试）
 ```
 
-默认任务是 `rise_edge`：为单比特输入生成同步上升沿脉冲。公开规格和教师 TB 分别位于 `tasks/rise_edge/spec.md` 与 `tasks/rise_edge/tb.sv`。一次运行会保存图快照、模型原始回答、提取的 RTL、可选 reasoning 文本、TB trace / 报告与面积 metric 到 `runs/<run-id>/`。
+- **Parser**：用模型判断 Spec 是否充分；缺少接口、时序、复位、延迟或测试预期时，通过网页输入框向用户提问，用户补充后重新评估。
+- **RTL Planner**：输出 JSON 计划，列出项目模块与文件结构。
+- **Coder**：按计划逐个文件生成 SystemVerilog。
+- **Tester**：把所有项目文件合并后交给固定教师 TB，并生成面积 / 功耗 metric；通过即结束。
+- **Modifier**：失败时根据失败报告修改 RTL 文件，再回到 Tester；最多 3 轮测试。
+- Spec 和 Summary 是画布上的只读固定节点，点击可查看完整内容；网页不提供节点编辑、连线、保存或设计空间。画布固定自动适配，不支持拖动或缩放。
 
-## 受限图模型
+## 子 Agent 实现
 
-图定义保存在 `agents/simple_eda_agent.json`，支持以下节点：
+每个角色是一个单独的 Python 文件，并维护自己的上下文：
 
-- `spec`：将节点文本作为规格注入上下文；
-- `model`：调用模型并提取 RTL；Prompt 可引用 `{spec}`、`{rtl}`、`{tb_result}` 与 `{previous}`；
-- `verify`：以固定教师 TB 编译、仿真并计算 metric；
-- `report`：汇总当前结果。
+| 角色 | 文件 | 独立上下文 |
+|---|---|---|
+| Parser | `subagents/parser.py` | `runs/<run>/agents/parser/context.json` |
+| RTL Planner | `subagents/planner.py` | `runs/<run>/agents/planner/context.json` |
+| Coder | `subagents/coder.py` | `runs/<run>/agents/coder/context.json` |
+| Tester | `subagents/tester.py` | `runs/<run>/agents/tester/context.json` |
+| Modifier | `subagents/modifier.py` | `runs/<run>/agents/modifier/context.json` |
 
-`verify` 和 `report` 的 Prompt 是可见、可保存的步骤说明；前者不会把文字传给模型，而是调用固定教师 TB。为使课堂实验可复现且安全，浏览器只能保存这四种节点，且每个节点最多一个前驱与一个后继；验证任务、测试平台及输出目录均固定，不能由 Prompt 或拖拽组件指定任意命令或路径。该 Agent 不会把失败 TB 自动反馈给模型修复，因而一次运行仍清楚区分了模型生成和后验验证。
+子 Agent 之间只通过 `runs/<run>/handoffs/` 下的 JSON 文件交互：
+
+- `spec_to_parser.json`
+- `parser_to_planner.json`
+- `planner_to_coder.json`
+- `coder_to_tester.json`
+- `tester_to_modifier[_attemptN].json`
+- `modifier_to_tester[_attemptN].json`
+- `tester_to_summary[_attemptN].json`
+
+画布上的箭头可点击，页面会读取对应的 handoff 文件，并支持在弹窗中切换多次 attempt 的版本。
+
+## 目录与数据
+
+- `agents/simple_eda_agent.json`：画布展示用的固定流程节点、角色说明与重试关系；
+- `tasks/rise_edge/`：固定任务 Spec、教师 TB 与功耗脚本；
+- `runs/<run-id>/`：每次运行的图快照、逐步事件、Parser 结果、计划、项目 RTL 文件、Tester 报告 / VCD、最终 `result.json` 与 metadata；
+- `skills/` 与 `common/tooling.py`：此前实验中的 Python skill 与工具库代码，暂时未接入新的 Agent 流程，保留供后续启用。
+
+## 安全与限制
+
+执行器只按固定流程调用模型与本地教师 TB，不执行任意 shell 命令或访问任意文件路径；模型生成的文件路径会被限制在本次运行的项目目录内。Tester 使用固定的 `rise_edge` 任务与教师 TB，不能由网页替换。运行期间可点击 `Stop`；等待 Spec 补充时也可停止。

@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#f6f8fb" />
-    <title>AI EDA · Prompt Workbench</title>
+    <meta name="theme-color" content="#f4f7fb" />
+    <title>AI EDA · Agent Workbench</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -20,12 +20,27 @@
       </header>
 
       <nav class="primary-tabs" aria-label="实验类型">
-        <button class="tab active" data-main-tab="prompt">Prompt</button>
+        <button class="tab active" data-main-tab="params">API 参数</button>
+        <button class="tab" data-main-tab="prompt">Prompt</button>
         <button class="tab" data-main-tab="agent">Agent</button>
       </nav>
 
       <main>
-        <section id="prompt-view" class="main-view">
+        <section id="params-view" class="params-view">
+          <div class="params-topbar">
+            <div id="param-sub-tabs" class="sub-tabs param-sub-tabs" aria-label="参数实验分页"></div>
+            <div class="model-chip-row">
+              <span class="model-chip"><b>MODEL</b><span id="params-model">读取中…</span></span>
+              <span class="model-chip"><b>BASE URL</b><span id="params-base-url">读取中…</span></span>
+            </div>
+          </div>
+
+          <div id="params-demos" class="params-demos">
+            <p class="panel params-loading">正在读取参数实验定义…</p>
+          </div>
+        </section>
+
+        <section id="prompt-view" class="main-view hidden">
           <div class="sub-tabs" aria-label="Prompt 内容">
             <button class="sub-tab active" data-prompt-tab="teaching">教学内容</button>
             <button class="sub-tab" data-prompt-tab="homework">课后作业</button>
@@ -54,26 +69,18 @@
             </aside>
 
             <section class="editor-column">
-              <article class="panel spec-panel">
-                <div class="panel-heading">
-                  <span>SPEC · 本次电路目标</span>
-                  <span class="read-only">READ ONLY</span>
-                </div>
-                <pre id="spec-content" class="spec-content">正在读取公开规格…</pre>
-              </article>
-
               <article class="panel prompt-panel">
                 <div class="panel-heading prompt-heading">
                   <div>
-                    <span>PROMPT · 可编辑并实时保存</span>
+                    <span>PROMPT · 只读展示</span>
                     <p id="prompt-description" class="panel-description"></p>
                   </div>
-                  <span id="save-status" class="save-status">等待编辑</span>
+                  <span class="read-only">READ ONLY</span>
                 </div>
-                <textarea id="prompt-editor" spellcheck="false" aria-label="Prompt 编辑器"></textarea>
+                <textarea id="prompt-editor" spellcheck="false" aria-label="教学 Prompt 只读展示" readonly></textarea>
                 <div class="editor-footer">
                   <span id="prompt-file" class="muted"></span>
-                  <span><kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>S</kbd> 立即保存</span>
+                  <span class="muted">教学 Prompt 由教师在文件中维护，工作台内不可修改</span>
                 </div>
               </article>
 
@@ -81,10 +88,10 @@
                 <div class="run-controls">
                   <div>
                     <p class="eyebrow">EXECUTION</p>
-                    <h2>运行当前 Prompt</h2>
-                    <p>保存当前文本后，调用一次模型并执行一次教师 TB。</p>
+                    <h2>生成 RTL 与验收</h2>
+                    <p>先流式生成 RTL（模型输出会实时显示），确认后再单独运行教师 TB 与面积/功耗评估。</p>
                   </div>
-                  <button id="run-button" class="run-button"><span class="play-icon">▶</span> Run Prompt</button>
+                  <button id="run-button" class="run-button"><span class="play-icon">▶</span> 生成 RTL</button>
                 </div>
                 <div class="config-row">
                   <label>Temperature <input id="temperature" type="number" min="0" max="2" step="0.1" value="0.2" /></label>
@@ -92,7 +99,7 @@
                   <label class="switch-label"><input id="thinking" type="checkbox" /><span class="switch"></span>请求模型思考文本</label>
                   <label>Reasoning <select id="reasoning-effort"><option value="low">low</option><option value="high" selected>high</option><option value="max">max</option></select></label>
                 </div>
-                <p id="run-status" class="run-status">就绪。运行会在本机保存 Prompt 快照、模型回答、RTL 和 TB 报告。</p>
+                <p id="run-status" class="run-status">就绪。「生成 RTL」会实时显示模型输出并保存运行记录；TB 面板的「运行 TB」和 metric 面板的「评估 metric」分别对已生成的 RTL 做验收与综合评估。</p>
               </article>
             </section>
 
@@ -100,17 +107,16 @@
               <article class="panel model-panel">
                 <div class="panel-heading"><span>MODEL RESPONSE</span><span id="run-id-label" class="muted">尚未运行</span></div>
                 <div class="response-tabs">
-                  <button class="response-tab active" data-response-tab="reasoning">思维链</button>
-                  <button class="response-tab" data-response-tab="answer">最终回答</button>
+                  <button class="response-tab active" data-response-tab="combined">思维链 + 最终回答</button>
                   <button class="response-tab" data-response-tab="rtl">生成 RTL</button>
                 </div>
-                <pre id="response-content" class="response-content empty-copy">运行后将在这里显示服务端返回的推理文本；若模型未返回可展示的 reasoning_content，会明确提示。</pre>
+                <div id="response-content" class="response-content empty-copy">运行后将在这里合并显示服务端返回的思维链与最终回答；若模型未返回可展示的 reasoning_content，会明确提示。</div>
               </article>
 
               <article class="panel tb-panel">
                 <div class="panel-heading">
                   <span>TESTBENCH RESULT</span>
-                  <span id="tb-badge" class="result-badge neutral">NO RUN</span>
+                  <span class="panel-heading-actions"><button id="run-tb-button" class="secondary-button panel-action-button" type="button" disabled>运行 TB</button><span id="tb-badge" class="result-badge neutral">NO RUN</span></span>
                 </div>
                 <p id="tb-summary" class="tb-summary">尚无测试结果。</p>
                 <div id="trace-wrap" class="trace-wrap empty-copy">运行通过仿真后，将显示教师 TB 的逐周期输入、输出与预期值。</div>
@@ -118,7 +124,7 @@
               </article>
 
               <article class="panel metrics-panel">
-                <div class="panel-heading"><span>CIRCUIT METRICS</span><span class="read-only">SYNTHESIS</span></div>
+                <div class="panel-heading"><span>CIRCUIT METRICS</span><span class="panel-heading-actions"><button id="run-metric-button" class="secondary-button panel-action-button" type="button" disabled>评估 metric</button><span class="read-only">SYNTHESIS</span></span></div>
                 <div class="metric-grid">
                   <div class="metric"><span>Area</span><strong id="metric-area">—</strong><small id="metric-unit">等待仿真</small></div>
                   <div class="metric"><span>Power</span><strong id="metric-power">—</strong><small>需要活动信息</small></div>
@@ -128,94 +134,283 @@
             </aside>
           </section>
 
-          <section id="homework-view" class="empty-view hidden">
-            <span class="empty-icon">▱</span>
-            <h2>课后作业</h2>
-            <p>该区域已保留，后续可接入同步 FIFO 的 Prompt 条件、运行记录与提交视图。</p>
+          <section id="homework-view" class="teaching-layout hidden">
+            <aside class="left-rail">
+              <div class="panel task-card">
+                <p class="eyebrow">HOMEWORK TASK</p>
+                <h1 id="hw-task-title">加载课后任务中…</h1>
+                <p class="task-meta">AES-128 · SINGLE MODULE · AREA / POWER</p>
+              </div>
+
+              <div class="panel run-history">
+                <div class="panel-heading"><span>Homework runs</span><span class="run-history-actions"><button id="hw-refresh-runs" class="text-button">刷新</button><button id="hw-clear-runs" class="text-button danger-text">清空</button></span></div>
+                <div id="hw-run-list" class="run-list empty-copy">尚无课后作业运行记录</div>
+              </div>
+            </aside>
+
+            <section class="editor-column">
+              <article class="panel spec-panel">
+                <div class="panel-heading"><span>SPEC · 课后作业要求</span><span class="read-only">READ ONLY</span></div>
+                <pre id="hw-spec-content" class="spec-content">正在读取作业说明…</pre>
+              </article>
+
+              <article class="panel prompt-panel">
+                <div class="panel-heading prompt-heading">
+                  <div>
+                    <span>PROMPT · 自拟完整 Prompt</span>
+                    <p class="panel-description">没有阶段模板；请自己写出包含算法分解、实现方案对比与面积优化思维链的完整 Prompt。</p>
+                  </div>
+                  <span id="hw-save-status" class="save-status">等待编辑</span>
+                </div>
+                <textarea id="hw-prompt-editor" spellcheck="false" aria-label="课后作业 Prompt 编辑器" placeholder="在这里填写你的完整 Prompt：算法分解、接口与时序约束、S-box / 密钥扩展 / 轮函数实现方案对比、面积与功耗优化思维链……"></textarea>
+                <div class="editor-footer">
+                  <span id="hw-prompt-file" class="muted"></span>
+                  <span><kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>S</kbd> 立即保存</span>
+                </div>
+              </article>
+
+              <article class="panel run-panel">
+                <div class="run-controls">
+                  <div>
+                    <p class="eyebrow">EXECUTION</p>
+                    <h2>生成 RTL 与验收</h2>
+                    <p>先流式生成 RTL（模型输出会实时显示），确认后再单独运行教师 AES TB 与面积/功耗评估。</p>
+                  </div>
+                  <button id="hw-run-button" class="run-button"><span class="play-icon">▶</span> 生成 RTL</button>
+                </div>
+                <div class="config-row">
+                  <label>Temperature <input id="hw-temperature" type="number" min="0" max="2" step="0.1" value="0.2" /></label>
+                  <label>Max tokens <input id="hw-max-tokens" type="number" min="64" max="16384" step="1" value="8192" /></label>
+                  <label class="switch-label"><input id="hw-thinking" type="checkbox" /><span class="switch"></span>请求模型思考文本</label>
+                  <label>Reasoning <select id="hw-reasoning-effort"><option value="low">low</option><option value="high" selected>high</option><option value="max">max</option></select></label>
+                </div>
+                <p id="hw-run-status" class="run-status">就绪。「生成 RTL」会实时显示模型输出并保存运行记录；TB 面板的「运行 TB」和 metric 面板的「评估 metric」分别执行教师 AES TB 与综合评估。</p>
+              </article>
+            </section>
+
+            <aside class="result-column">
+              <article class="panel model-panel">
+                <div class="panel-heading"><span>MODEL RESPONSE</span><span id="hw-run-id-label" class="muted">尚未运行</span></div>
+                <div class="response-tabs">
+                  <button class="response-tab active" data-hw-response-tab="combined">思维链 + 最终回答</button>
+                  <button class="response-tab" data-hw-response-tab="rtl">生成 RTL</button>
+                </div>
+                <div id="hw-response-content" class="response-content empty-copy">运行后将在这里显示模型回答；可在顶部切换查看提取出的 RTL。</div>
+              </article>
+
+              <article class="panel tb-panel">
+                <div class="panel-heading"><span>TESTBENCH RESULT</span><span class="panel-heading-actions"><button id="hw-run-tb-button" class="secondary-button panel-action-button" type="button" disabled>运行 TB</button><span id="hw-tb-badge" class="result-badge neutral">NO RUN</span></span></div>
+                <p id="hw-tb-summary" class="tb-summary">尚无测试结果。</p>
+                <div id="hw-trace-wrap" class="trace-wrap empty-copy">运行通过仿真后，将显示教师 TB 的握手、向量与复位检查记录。</div>
+                <details class="raw-output"><summary>原始 TB 输出</summary><pre id="hw-tb-stdout">—</pre></details>
+              </article>
+
+              <article class="panel metrics-panel">
+                <div class="panel-heading"><span>CIRCUIT METRICS</span><span class="panel-heading-actions"><button id="hw-run-metric-button" class="secondary-button panel-action-button" type="button" disabled>评估 metric</button><span class="read-only">SYNTHESIS</span></span></div>
+                <div class="metric-grid">
+                  <div class="metric"><span>Area</span><strong id="hw-metric-area">—</strong><small id="hw-metric-unit">等待仿真</small></div>
+                  <div class="metric"><span>Power</span><strong id="hw-metric-power">—</strong><small>需要活动信息</small></div>
+                  <div class="metric"><span>Toolchain</span><strong id="hw-metric-status">—</strong><small id="hw-metric-note">Yosys / OpenSTA</small></div>
+                </div>
+              </article>
+            </aside>
           </section>
         </section>
 
         <section id="agent-view" class="agent-view hidden">
           <div class="agent-hero">
-            <div>
-              <p class="eyebrow">VISUAL AGENT BUILDER</p>
-              <h1 id="agent-name">简易 EDA 自动设计 Agent</h1>
-              <p>拖动节点规划流程，点击节点编辑 Prompt；运行后在公共窗口查看每一步发给模型的内容、回答和 EDA 工具结果。</p>
+            <div class="agent-hero-copy">
+              <p class="eyebrow">AGENT WORKBENCH</p>
+              <div class="agent-title-row">
+                <h1 id="agent-name">简易 EDA 自动设计 Agent</h1>
+                <span class="read-only">FIXED FLOW</span>
+              </div>
+              <p>Agent 流程固定在后端配置中：Parser 评估并补齐 Spec → RTL Planner 规划模块/文件 → Coder 逐文件实现 → Tester 运行教师 TB 与面积功耗评估；失败时交给 Modifier 修复后重新测试。本页面只展示固定的 Agent 设计、每一次运行过程与最终结果。</p>
             </div>
             <div class="agent-hero-actions">
-              <span id="agent-save-status" class="save-status">载入中</span>
-              <button id="agent-run-button" class="run-button"><span class="play-icon">▶</span> Run Agent</button>
+              <button id="agent-stop-button" class="stop-button hidden" type="button">■ Stop</button>
+              <button id="agent-run-button" class="run-button" type="button"><span class="play-icon">▶</span> Run Agent <kbd>⌘↵</kbd></button>
             </div>
           </div>
 
           <div class="agent-layout">
-            <aside class="panel agent-palette">
-              <div class="panel-heading"><span>COMPONENTS</span><span class="read-only">DRAG TO CANVAS</span></div>
-              <p class="palette-help">拖入组件后，选择节点并设置标题、Prompt 与下一节点。</p>
-              <div class="palette-list">
-                <button class="palette-item" draggable="true" data-node-type="spec"><span class="node-glyph spec-glyph">▤</span><span><strong>Spec</strong><small>向 Agent 注入设计目标</small></span></button>
-                <button class="palette-item" draggable="true" data-node-type="model"><span class="node-glyph model-glyph">✦</span><span><strong>Model</strong><small>调用大模型生成 RTL</small></span></button>
-                <button class="palette-item" draggable="true" data-node-type="verify"><span class="node-glyph verify-glyph">✓</span><span><strong>Verify</strong><small>固定 TB 与 metric</small></span></button>
-                <button class="palette-item" draggable="true" data-node-type="report"><span class="node-glyph report-glyph">≡</span><span><strong>Report</strong><small>汇总执行结果</small></span></button>
+            <aside class="agent-rail">
+              <div class="panel agent-palette">
+                <div class="panel-heading"><span>AGENT FLOW</span><span class="read-only">FIXED IN CODE</span></div>
+                <div id="agent-flow-list" class="agent-flow-list"></div>
+                <div class="palette-tip">
+                  <strong>只读</strong>
+                  <span>流程定义在 agent_optimization/agents/simple_eda_agent.json；工作台不提供在线编辑。</span>
+                </div>
               </div>
-              <p class="agent-rule">当前最小执行器支持无分支链式流程：每个节点至多连接一个后继。</p>
+
+              <div class="panel agent-history">
+                <div class="panel-heading"><span>RUN HISTORY</span><span class="run-history-actions"><button id="agent-refresh-runs" class="text-button">刷新</button><button id="agent-clear-runs" class="text-button danger-text">清空</button></span></div>
+                <div id="agent-run-list" class="run-list empty-copy">尚无 Agent 运行记录</div>
+              </div>
+
             </aside>
 
             <section class="panel agent-canvas-panel">
-              <div class="panel-heading">
+              <div class="panel-heading canvas-heading">
                 <span>AGENT CANVAS</span>
-                <span class="canvas-hint">拖动节点 · 点击编辑 · 绿色箭头表示执行顺序</span>
+                <span class="read-only">FIXED VIEW</span>
               </div>
               <div id="agent-canvas-scroll" class="agent-canvas-scroll">
                 <div id="agent-canvas" class="agent-canvas" aria-label="Agent 流程画布">
-                  <svg id="agent-edges" class="agent-edges" aria-hidden="true"><defs><marker id="arrow-head" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z"></path></marker></defs></svg>
-                  <div id="agent-nodes"></div>
-                  <p id="canvas-empty" class="canvas-empty hidden">从左侧拖入组件，或编辑默认 EDA Agent。</p>
+                  <svg id="agent-edges" class="agent-edges" aria-hidden="true">
+                    <defs>
+                      <marker id="arrow-head" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z"></path></marker>
+                      <marker id="arrow-retry" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z"></path></marker>
+                    </defs>
+                  </svg>
+                  <div id="agent-nodes" class="agent-node-layer"></div>
+                  <p id="canvas-empty" class="canvas-empty hidden">Agent 流程尚未载入。</p>
                 </div>
+              </div>
+              <div class="canvas-statusbar">
+                <span class="canvas-legend">
+                  <i class="legend-dot model"></i>Model
+                  <i class="legend-dot verify"></i>Verify
+                  <i class="legend-dot fixed"></i>Fixed I/O
+                  <i class="legend-dash"></i>失败重试
+                </span>
+                <span class="canvas-handoff-hint">点击箭头查看子 Agent 交接</span>
+                <span id="agent-graph-stats" class="muted">0 nodes · 0 links</span>
               </div>
             </section>
 
-            <aside class="panel agent-inspector">
-              <div class="panel-heading"><span>NODE INSPECTOR</span><span id="selected-node-type" class="read-only">NO NODE</span></div>
-              <div id="agent-inspector-empty" class="empty-copy">点击画布中的组件，编辑该步骤发给模型或工具的 Prompt。</div>
-              <form id="agent-node-form" class="node-form hidden">
-                <label>节点标题<input id="agent-node-title" maxlength="100" /></label>
-                <label>Prompt / 节点说明<textarea id="agent-node-prompt" spellcheck="false"></textarea></label>
-                <label>连接到下一节点<select id="agent-node-next"></select></label>
-                <div class="inspector-actions"><button type="button" id="agent-delete-node" class="danger-button">删除节点</button><button type="submit" class="secondary-button">保存节点</button></div>
-              </form>
+            <aside id="agent-inspector" class="panel agent-inspector">
+              <div class="panel-heading"><span>NODE DETAIL</span><span id="selected-node-type" class="read-only">NO NODE</span></div>
+              <div id="agent-inspector-empty" class="empty-copy">点击画布中的节点，查看固定的 Prompt 与重试配置。</div>
+              <div id="agent-node-detail" class="node-detail hidden">
+                <div id="inspector-type-chip" class="inspector-type-chip"></div>
+                <h3 id="agent-detail-title"></h3>
+                <div class="detail-section">
+                  <span class="detail-label">Prompt / 节点说明</span>
+                  <pre id="agent-detail-prompt" class="node-detail-prompt"></pre>
+                </div>
+                <div id="agent-detail-retry-section" class="detail-section">
+                  <span class="detail-label">失败回环</span>
+                  <p id="agent-detail-retry" class="field-hint"></p>
+                </div>
+              </div>
+
               <div class="agent-run-config">
-                <p class="eyebrow">AGENT RUN CONFIG</p>
+                <p class="eyebrow">RUN CONFIG</p>
+                <label class="field-label inline">Temperature <input id="agent-temperature" type="number" min="0" max="2" step="0.1" value="0.2" /></label>
+                <label class="field-label inline">Max tokens <input id="agent-max-tokens" type="number" min="1" step="1" value="4096" /></label>
+                <label class="field-label inline">Reasoning
+                  <select id="agent-reasoning-effort"><option value="low">low</option><option value="high" selected>high</option><option value="max">max</option></select>
+                </label>
                 <label class="switch-label"><input id="agent-thinking" type="checkbox" /><span class="switch"></span>请求模型思考文本</label>
-                <label>Temperature <input id="agent-temperature" type="number" min="0" max="2" step="0.1" value="0.2" /></label>
               </div>
             </aside>
           </div>
 
           <section class="panel agent-console-panel">
-            <div class="panel-heading"><span>AGENT EXECUTION CONSOLE</span><span id="agent-run-status" class="muted">编辑图后运行 Agent</span></div>
+            <div class="panel-heading">
+              <span>EXECUTION TRACE</span>
+              <span id="agent-run-status" class="muted">固定流程就绪，点击 Run Agent 运行</span>
+            </div>
+            <div id="agent-progress" class="agent-progress hidden"><div id="agent-progress-bar" class="agent-progress-bar"></div></div>
+            <div id="agent-phase-strip" class="agent-phase-strip" aria-label="Agent 流程阶段状态"></div>
             <div class="agent-console-grid">
-              <div id="agent-events" class="agent-events empty-copy">运行后会在此列出每一步。</div>
+              <div class="agent-events-pane">
+                <div class="events-header"><span>STEPS <b id="agent-event-count">0</b></span><button id="agent-follow-live" class="text-button" type="button">跟随最新</button></div>
+                <div id="agent-events" class="agent-events empty-copy">运行后会在此实时列出每一步。</div>
+              </div>
               <div class="agent-console-detail">
-                <div class="response-tabs agent-console-tabs">
-                  <button class="agent-detail-tab active" data-agent-detail="prompt">发送的 Prompt</button>
-                  <button class="agent-detail-tab" data-agent-detail="reasoning">思维链</button>
-                  <button class="agent-detail-tab" data-agent-detail="response">模型回答 / 工具输出</button>
-                  <button class="agent-detail-tab" data-agent-detail="rtl">RTL / TB</button>
+                <div class="detail-header">
+                  <div class="response-tabs agent-console-tabs">
+                    <button class="agent-detail-tab active" data-agent-detail="prompt">发送的 Prompt</button>
+                    <button class="agent-detail-tab" data-agent-detail="reasoning">思维链</button>
+                    <button class="agent-detail-tab" data-agent-detail="response">模型回答 / 工具输出</button>
+                    <button class="agent-detail-tab" data-agent-detail="rtl">RTL / TB</button>
+                  </div>
+                  <button id="agent-copy-detail" class="text-button" type="button">复制</button>
                 </div>
-                <pre id="agent-detail-content" class="agent-detail-content">选择一个运行步骤后，将在这里显示详细内容。</pre>
+                <div id="agent-event-meta" class="agent-event-meta"></div>
+                <div id="agent-detail-content" class="agent-detail-content">选择一个运行步骤后，将在这里显示详细内容。</div>
+                <div id="agent-verify-visual" class="agent-verify-visual hidden">
+                  <div id="agent-metrics" class="metric-grid compact"></div>
+                  <div id="agent-trace-wrap" class="trace-wrap"></div>
+                  <details class="raw-output"><summary>原始 TB 输出</summary><pre id="agent-tb-stdout">—</pre></details>
+                </div>
               </div>
             </div>
+          </section>
+
+          <section class="panel agent-compare-panel">
+            <div class="panel-heading">
+              <span>RUN COMPARISON</span>
+              <span id="agent-compare-summary" class="muted">尚无运行记录</span>
+            </div>
+            <div id="agent-compare-body" class="agent-compare-body empty-copy">运行 Agent 后，将在这里比较不同设计的通过情况、轮次、耗时、token 与电路 metric。</div>
           </section>
         </section>
       </main>
     </div>
+
     <template id="trace-template">
       <table class="trace-table">
         <thead><tr><th>Cycle</th><th>场景 / 事件</th><th>输入<br><small>valid · ready · bit</small></th><th>输出<br><small>valid · ready · match</small></th><th>期望<br><small>valid · match</small></th></tr></thead>
         <tbody></tbody>
       </table>
     </template>
+
+    <dialog id="agent-handoff-dialog" class="confirm-dialog agent-handoff-dialog">
+      <form method="dialog">
+        <span class="dialog-kicker">SUBAGENT HANDOFF</span>
+        <h2 id="agent-handoff-title">子 Agent 交接</h2>
+        <p id="agent-handoff-meta" class="field-hint"></p>
+        <div id="agent-handoff-tabs" class="handoff-tabs"></div>
+        <pre id="agent-handoff-content" class="agent-handoff-content">—</pre>
+        <div class="dialog-actions">
+          <button value="close" class="secondary-button">关闭</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="agent-input-dialog" class="confirm-dialog agent-input-dialog">
+      <form id="agent-input-form" method="dialog">
+        <span class="dialog-kicker">SPEC CLARIFICATION</span>
+        <h2>Parser 需要补充 Spec</h2>
+        <p id="agent-input-summary" class="field-hint"></p>
+        <ul id="agent-input-questions" class="agent-input-questions"></ul>
+        <label class="field-label">补充内容
+          <textarea id="agent-input-response" rows="5" placeholder="请补充缺失的接口、时序、复位、延迟或测试预期等信息"></textarea>
+        </label>
+        <p id="agent-input-status" class="field-hint"></p>
+        <div class="dialog-actions">
+          <button type="button" id="agent-input-cancel" class="secondary-button">停止 Agent</button>
+          <button type="submit" id="agent-input-submit" class="primary-button">提交补充</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="agent-fixed-dialog" class="confirm-dialog agent-fixed-dialog">
+      <form method="dialog">
+        <span class="dialog-kicker" id="agent-fixed-kind">FIXED NODE</span>
+        <h2 id="agent-fixed-title">固定节点</h2>
+        <pre id="agent-fixed-content" class="agent-fixed-content"></pre>
+        <div class="dialog-actions">
+          <button value="close" class="secondary-button">关闭</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="confirm-dialog" class="confirm-dialog">
+      <form method="dialog">
+        <h2 id="confirm-title">确认操作</h2>
+        <p id="confirm-message"></p>
+        <div class="dialog-actions">
+          <button value="cancel" class="secondary-button">取消</button>
+          <button value="confirm" id="confirm-accept" class="danger-button">确认</button>
+        </div>
+      </form>
+    </dialog>
+    <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
     <script src="/app.js"></script>
   </body>
 </html>
