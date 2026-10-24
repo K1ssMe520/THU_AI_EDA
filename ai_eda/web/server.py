@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from .agent_runner import (
+from ai_eda.agent.orchestrator import run_agent
+from ai_eda.agent.runs import (
     DESIGN_ID_PATTERN,
     AgentCancelled,
     agent_state_payload,
@@ -29,17 +30,20 @@ from .agent_runner import (
     load_agent_graph,
     load_agent_handoff,
     load_agent_run,
-    run_agent,
     save_agent_design,
     save_agent_graph,
 )
-from .tooling import delete_skill, list_skills, load_skill, save_skill
-from .param_lab import describe as describe_param_lab
-from .param_lab import run_demo as run_param_demo
-from .api import DEFAULT_SYSTEM_PROMPT, ModelClient
-from .runner import (
+from ai_eda.config import (
     PROJECT_ROOT,
-    RUNS_ROOT,
+    PROMPTS_ROOT,
+    PROMPT_RUNS_ROOT,
+    TASKS_ROOT,
+    WEB_ROOT as STATIC_WEB_ROOT,
+)
+from ai_eda.model.client import DEFAULT_SYSTEM_PROMPT, ModelClient
+from ai_eda.prompt.param_lab import describe as describe_param_lab
+from ai_eda.prompt.param_lab import run_demo as run_param_demo
+from ai_eda.rtl.runner import (
     _run_component,
     evaluate_metrics,
     retest_run,
@@ -49,15 +53,16 @@ from .runner import (
     summarize_task,
 )
 
-WEB_ROOT = PROJECT_ROOT / "web"
+WEB_ROOT = STATIC_WEB_ROOT
+RUNS_ROOT = PROMPT_RUNS_ROOT
 TASK_ID = "classroom_seq1011"
-TASK_DIR = PROJECT_ROOT / "prompt_optimization" / "tasks" / TASK_ID
-PROMPT_ROOT = PROJECT_ROOT / "prompt_optimization" / "prompts" / "classroom"
+TASK_DIR = TASKS_ROOT / TASK_ID
+PROMPT_ROOT = PROMPTS_ROOT / "classroom"
 
 HOMEWORK_TASK_ID = "homework_aes128"
 HOMEWORK_TASK_TITLE = "课后作业：单模块 AES-128 加密核"
-HOMEWORK_TASK_DIR = PROJECT_ROOT / "prompt_optimization" / "tasks" / HOMEWORK_TASK_ID
-HOMEWORK_PROMPT_PATH = PROJECT_ROOT / "prompt_optimization" / "prompts" / "homework" / "H1_custom.md"
+HOMEWORK_TASK_DIR = TASKS_ROOT / HOMEWORK_TASK_ID
+HOMEWORK_PROMPT_PATH = PROMPTS_ROOT / "homework" / "H1_custom.md"
 HOMEWORK_TESTBENCH_TOP = "tb_homework_aes128"
 HOMEWORK_POWER_TESTBENCH_TOP = "tb_power_homework_aes128"
 
@@ -577,13 +582,6 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
                 self._send_json(agent_state_payload())
             elif path == "/api/agent/graph":
                 self._send_json(load_agent_graph())
-            elif path == "/api/agent/skills":
-                self._send_json({"skills": list_skills()})
-            elif path.startswith("/api/agent/skills/"):
-                skill_name = _run_component(
-                    path.removeprefix("/api/agent/skills/"), "skill"
-                )
-                self._send_json(load_skill(skill_name))
             elif path == "/api/agent/designs":
                 self._send_json({"designs": list_agent_designs()})
             elif path.startswith("/api/agent/designs/"):
@@ -678,32 +676,14 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/agent/graph":
             self._send_error_json(
-                "Agent 流程固定在 agent_optimization/agents/simple_eda_agent.json 中；工作台不提供在线编辑。",
+                "Agent 流程固定在 content/agent/simple_eda_agent.json 中；工作台不提供在线编辑。",
                 HTTPStatus.FORBIDDEN,
             )
-            return
-        if path.startswith("/api/agent/skills/"):
-            try:
-                skill_name = _run_component(
-                    path.removeprefix("/api/agent/skills/"), "skill"
-                )
-                request = _read_json_body(self)
-                self._send_json(
-                    save_skill(
-                        skill_name,
-                        title=request.get("title"),
-                        description=request.get("description"),
-                        code=request.get("code"),
-                        parameters=request.get("parameters"),
-                    )
-                )
-            except (ValueError, FileNotFoundError, OSError, json.JSONDecodeError) as error:
-                self._send_error_json(str(error))
             return
         if path.startswith("/api/prompts/"):
             # 教学阶段的 5 条 Prompt 作为课程材料固定展示，只允许教师直接修改文件。
             self._send_error_json(
-                "教学 Prompt 为只读，不能通过工作台修改；请直接在 prompt_optimization/prompts/classroom/ 中维护。",
+                "教学 Prompt 为只读，不能通过工作台修改；请直接在 content/prompts/classroom/ 中维护。",
                 HTTPStatus.FORBIDDEN,
             )
             return
@@ -912,18 +892,6 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
     def do_DELETE(self) -> None:  # noqa: N802
         """删除运行记录；路径始终限制在已登记的 runs 目录内。"""
         path = urlparse(self.path).path
-        if path.startswith("/api/agent/skills/"):
-            try:
-                skill_name = _run_component(
-                    path.removeprefix("/api/agent/skills/"), "skill"
-                )
-                delete_skill(skill_name)
-                self._send_json({"ok": True, "deleted": skill_name})
-            except FileNotFoundError as error:
-                self._send_error_json(str(error), HTTPStatus.NOT_FOUND)
-            except (ValueError, OSError) as error:
-                self._send_error_json(str(error))
-            return
         if path.startswith("/api/agent/designs/"):
             try:
                 design_id = _run_component(

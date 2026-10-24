@@ -7,22 +7,19 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .runner import PROJECT_ROOT, retest_run, run_prompt_experiment, summarize_task
+from ai_eda.config import PROJECT_ROOT, PROMPTS_ROOT, TASKS_ROOT
+from ai_eda.rtl.runner import retest_run, run_prompt_experiment, summarize_task
 
 
 # 教师发布任务时在此登记公开材料；不使用 task.json。
 TASKS = {
     "classroom_seq1011": {
-        "directory": "prompt_optimization/tasks/classroom_seq1011",
+        "directory": "classroom_seq1011",
         "testbench_top": "tb_classroom_seq1011",
         "power_testbench_top": "tb_power_classroom_seq1011",
     },
-    "homework_sync_fifo": {
-        "directory": "prompt_optimization/tasks/homework_sync_fifo",
-        "testbench_top": "tb_homework_sync_fifo",
-    },
     "homework_aes128": {
-        "directory": "prompt_optimization/tasks/homework_aes128",
+        "directory": "homework_aes128",
         "testbench_top": "tb_homework_aes128",
         "power_testbench_top": "tb_power_homework_aes128",
     },
@@ -37,7 +34,7 @@ def _path_from_project(value: str) -> Path:
 
 def _task_paths(task_name: str) -> tuple[Path, Path, str]:
     task = TASKS[task_name]
-    task_dir = PROJECT_ROOT / task["directory"]
+    task_dir = TASKS_ROOT / task["directory"]
     return task_dir / "spec.md", task_dir / "tb.sv", task["testbench_top"]
 
 
@@ -46,7 +43,7 @@ def _power_paths(task_name: str) -> tuple[Path | None, str | None]:
     power_testbench_top = task.get("power_testbench_top")
     if not power_testbench_top:
         return None, None
-    task_dir = PROJECT_ROOT / task["directory"]
+    task_dir = TASKS_ROOT / task["directory"]
     return task_dir / "power_tb.sv", power_testbench_top
 
 
@@ -64,7 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_parser = subcommands.add_parser("run", help="生成一次 RTL 并执行教师测试")
     _add_task_argument(run_parser)
-    run_parser.add_argument("--prompt", required=True, help="相对路径以 prompt_optimization/prompts/ 为根目录")
+    run_parser.add_argument("--prompt", required=True, help="相对路径以 content/prompts/ 为根目录")
     run_parser.add_argument("--run-id", required=True, help="本次实验的唯一编号")
     run_parser.add_argument("--temperature", type=float, default=0.2)
     run_parser.add_argument("--max-tokens", type=int, default=4096)
@@ -92,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
         power_testbench_path, power_testbench_top = _power_paths(args.task)
         prompt_path = Path(args.prompt)
         if not prompt_path.is_absolute():
-            prompt_path = PROJECT_ROOT / "prompt_optimization" / "prompts" / prompt_path
+            prompt_path = PROMPTS_ROOT / prompt_path
         run_dir, report = run_prompt_experiment(
             task_name=args.task,
             spec_path=spec_path,
@@ -120,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "serve":
-        from .webapp import serve
+        from ai_eda.web.server import serve
 
         serve(args.host, args.port)
         return 0

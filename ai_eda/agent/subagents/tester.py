@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from common.runner import PROJECT_ROOT, save_report, test_rtl
+from ai_eda.config import TASKS_ROOT
+from ai_eda.rtl.runner import save_report, test_rtl
 
 from .base import SubAgent
 from .common import combine_files, report_feedback, report_summary
 
-AGENT_TASK_DIR = PROJECT_ROOT / "agent_optimization" / "tasks" / "rise_edge"
+AGENT_TASK_DIR = TASKS_ROOT / "stream_filter"
 
 
 class TesterAgent(SubAgent):
@@ -28,12 +29,12 @@ class TesterAgent(SubAgent):
             "tester", self.node_type, f"{self.title}（第 {attempt} 轮）", prompt, attempt
         )
         report = test_rtl(
-            task_name="agent_rise_edge",
+            task_name="agent_stream_filter",
             testbench_path=AGENT_TASK_DIR / "tb.sv",
-            testbench_top="tb_agent_rise_edge",
+            testbench_top="tb_agent_stream_filter",
             rtl_path=combined_path,
             power_testbench_path=AGENT_TASK_DIR / "power_tb.sv",
-            power_testbench_top="tb_power_agent_rise_edge",
+            power_testbench_top="tb_power_agent_stream_filter",
             run_dir=tester_dir,
         )
         self.check_cancel()

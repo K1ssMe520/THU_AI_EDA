@@ -1,7 +1,7 @@
 """Shared API, model-configuration, and RTL-test utilities."""
 
-from .api import ModelClient
-from .runner import (
+from ai_eda.model.client import ModelClient
+from ai_eda.rtl.runner import (
     create_run,
     retest_run,
     run_prompt_experiment,

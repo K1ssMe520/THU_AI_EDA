@@ -36,8 +36,6 @@ const state = {
     graph: null,
     serverGraph: null,
     spec: "",
-    catalog: { builtin: [], skills: [] },
-    skills: [],
     result: null,
     designs: [],
     runs: [],
@@ -60,7 +58,6 @@ const state = {
     view: { x: 48, y: 48, scale: 1 },
     needsFit: true,
     history: { past: [], future: [], editSnapshot: null },
-    skillEditing: null,
     waitingInput: null,
   },
 };
@@ -691,7 +688,6 @@ const NODE_DEFAULTS = {
   model: {
     title: "New Model Step",
     prompt: "根据以下冻结规格生成可编译的 SystemVerilog RTL。最终输出只能包含一个 RTL 模块，不要输出 Markdown、解释、testbench 或其他模块。\n\n{spec}\n\n如果提供了上一轮验证反馈，请先修复其中的问题：\n{verify_feedback}",
-    tools: [],
   },
   verify: {
     title: "New Verify Step",
@@ -713,7 +709,6 @@ const DEFAULT_AGENT_GRAPH = {
       type: "model",
       title: "01 · RTL Designer",
       prompt: "根据以下冻结规格生成可编译的 SystemVerilog RTL。规格中的接口、时序和复位要求均为强制要求。最终输出只能包含一个 RTL 模块，不要输出 Markdown、解释、testbench 或其他模块。\n\n{spec}\n\n当前为第 {attempt} 轮生成。如果提供了失败反馈，请逐条定位并修复：\n{verify_feedback}",
-      tools: ["run_testbench", "synthesize_area", "estimate_power"],
       x: 120,
       y: 120,
     },
@@ -767,13 +762,11 @@ function normalizeAgentGraph(graph) {
     }));
     delete node.retry;
     if (node.type === "model") {
-      node.tools = Array.isArray(node.tools) ? node.tools.filter((name) => typeof name === "string") : [];
     }
     return node;
   });
   rawNodes.forEach((raw) => {
     if (!raw || !kept.includes(raw.id) || !raw.retry || !kept.includes(raw.retry.target)) return;
-    if (byId.get(raw.retry.target)?.type !== "model") return;
     const node = nodes.find((candidate) => candidate.id === raw.id);
     if (node) node.retry = { target: raw.retry.target, max: Math.max(1, Math.min(5, Number(raw.retry.max) || 2)) };
   });
@@ -1046,7 +1039,6 @@ function selectAgentNode(nodeId) {
   chip.textContent = `${node.type.toUpperCase()} NODE${node.id === agentGraph().entry ? " · ENTRY" : ""}`;
   $("#agent-detail-title").textContent = node.title;
   $("#agent-detail-prompt").textContent = node.prompt;
-  renderAgentToolChecklist(node);
   const retrySection = $("#agent-detail-retry-section");
   const retryText = $("#agent-detail-retry");
   if (node.retry) {
@@ -1267,159 +1259,6 @@ function openAgentFixedDialog(kind) {
   $("#agent-fixed-dialog").showModal();
 }
 
-function renderAgentToolChecklist(node) {
-  const section = $("#agent-detail-tools-section");
-  const list = $("#agent-detail-tools");
-  if (!section || !list) return;
-  if (!node || node.type !== "model") {
-    section.classList.add("hidden");
-    return;
-  }
-  section.classList.remove("hidden");
-  list.replaceChildren();
-  const selected = new Set(Array.isArray(node.tools) ? node.tools : []);
-  const labels = new Map();
-  (state.agent.catalog.builtin || []).forEach((tool) => labels.set(tool.name, tool.title));
-  (state.agent.skills || []).forEach((skill) => labels.set(`skill_${skill.name}`, `Skill · ${skill.title}`));
-  if (!selected.size) {
-    const hint = document.createElement("span");
-    hint.className = "muted";
-    hint.textContent = "未启用工具 / skills（仅一次性生成）。";
-    list.append(hint);
-    return;
-  }
-  [...selected].forEach((name) => {
-    const chip = document.createElement("span");
-    chip.className = "tool-chip";
-    chip.textContent = labels.get(name) || name;
-    list.append(chip);
-  });
-}
-
-function renderAgentSkills() {
-  const container = $("#agent-skill-list");
-  if (!container) return;
-  container.replaceChildren();
-  const skills = state.agent.skills || [];
-  if (!skills.length) {
-    container.className = "skill-list empty-copy";
-    container.textContent = "尚无 skills，点击右上角新建。";
-    return;
-  }
-  container.className = "skill-list";
-  skills.forEach((skill) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "skill-item";
-    const title = document.createElement("strong");
-    title.textContent = skill.title;
-    const description = document.createElement("small");
-    description.textContent = skill.available ? skill.description : `${skill.description}（缺少 ${skill.entry}）`;
-    button.append(title, description);
-    container.append(button);
-  });
-}
-
-async function loadAgentSkills() {
-  const payload = await api("/api/agent/skills");
-  state.agent.skills = payload.skills || [];
-  state.agent.catalog.skills = state.agent.skills;
-  renderAgentSkills();
-  const selected = agentNode(state.agent.selectedNodeId);
-  if (selected) renderAgentToolChecklist(selected);
-}
-
-async function openSkillDialog(skill = null) {
-  if (state.agent.running) {
-    showToast("Agent 运行中，暂不能编辑 Skill", "warning");
-    return;
-  }
-  let detail = skill;
-  if (skill) {
-    try {
-      detail = await api(`/api/agent/skills/${encodeURIComponent(skill.name)}`);
-    } catch (error) {
-      showToast(error.message, "error");
-      return;
-    }
-  }
-  state.agent.skillEditing = detail?.name || null;
-  $("#skill-dialog-title").textContent = detail ? `编辑 Skill · ${detail.name}` : "新建 Python Skill";
-  $("#skill-name").value = detail?.name || "";
-  $("#skill-name").disabled = Boolean(detail);
-  $("#skill-title").value = detail?.title || "";
-  $("#skill-description").value = detail?.description || "";
-  $("#skill-parameters").value = JSON.stringify(detail?.parameters || {
-    type: "object",
-    properties: { input: { type: "string", description: "Skill 的文本输入" } },
-    additionalProperties: true,
-  }, null, 2);
-  $("#skill-code").value = detail?.code || "";
-  $("#skill-status").textContent = detail ? "" : "保存后会出现在 Model 节点的可用工具列表中。";
-  $("#skill-delete").classList.toggle("hidden", !detail);
-  $("#skill-dialog").showModal();
-}
-
-async function saveSkillFromDialog(event) {
-  event.preventDefault();
-  const name = $("#skill-name").value.trim();
-  if (!/^[a-z][a-z0-9_]{0,31}$/.test(name)) {
-    $("#skill-status").textContent = "名称必须以小写字母开头，只包含小写字母、数字、下划线";
-    return;
-  }
-  let parameters;
-  try {
-    parameters = JSON.parse($("#skill-parameters").value || "{}");
-  } catch (error) {
-    $("#skill-status").textContent = `参数 JSON 无效：${error.message}`;
-    return;
-  }
-  if (!parameters || typeof parameters !== "object" || Array.isArray(parameters)) {
-    $("#skill-status").textContent = "参数 JSON 必须是对象";
-    return;
-  }
-  const payload = {
-    title: $("#skill-title").value.trim() || name,
-    description: $("#skill-description").value.trim(),
-    code: $("#skill-code").value,
-    parameters,
-  };
-  $("#skill-save").disabled = true;
-  $("#skill-status").textContent = "正在保存…";
-  try {
-    const editing = state.agent.skillEditing;
-    if (editing && editing !== name) {
-      await api(`/api/agent/skills/${encodeURIComponent(editing)}`, { method: "DELETE" });
-    }
-    await api(`/api/agent/skills/${encodeURIComponent(name)}`, {
-      method: "PUT",
-      body: JSON.stringify(payload),
-    });
-    await loadAgentSkills();
-    $("#skill-dialog").close();
-    showToast(`Skill ${name} 已保存`, "success");
-  } catch (error) {
-    $("#skill-status").textContent = error.message;
-  } finally {
-    $("#skill-save").disabled = false;
-  }
-}
-
-async function deleteSkillFromDialog() {
-  const name = state.agent.skillEditing;
-  if (!name) return;
-  const approved = await confirmAction("删除 Skill", `删除 Skill“${name}”及其 Python 文件？`, "删除");
-  if (!approved) return;
-  try {
-    await api(`/api/agent/skills/${encodeURIComponent(name)}`, { method: "DELETE" });
-    await loadAgentSkills();
-    $("#skill-dialog").close();
-    showToast(`Skill ${name} 已删除`, "success");
-  } catch (error) {
-    $("#skill-status").textContent = error.message;
-  }
-}
-
 function updateSelectedAgentNodeDraft(renderCanvas = false) {
   const node = agentNode(state.agent.selectedNodeId);
   if (!node) return;
@@ -1505,7 +1344,6 @@ function duplicateSelectedAgentNode() {
       x: node.x + 40,
       y: node.y + 40,
     };
-    if (node.type === "model") clone.tools = [...(node.tools || [])];
     target.nodes.push(clone);
   });
   selectAgentNode(id);
@@ -1538,7 +1376,6 @@ function addAgentNode(type, x, y) {
       x: Math.max(0, Math.round(baseX / GRID) * GRID),
       y: Math.max(0, Math.round(baseY / GRID) * GRID),
     };
-    if (type === "model") newNode.tools = [];
     target.nodes.push(newNode);
     if (!target.entry) target.entry = id;
   });
@@ -1675,11 +1512,16 @@ function handoffEdgeId(source, target) {
   return `${source}_to_${target}`;
 }
 
-function addHandoffHitArea(svg, pathData, edgeId) {
+function addHandoffHitArea(svg, pathData, edgeId, visiblePath = null) {
   const hit = document.createElementNS("http://www.w3.org/2000/svg", "path");
   hit.setAttribute("d", pathData);
   hit.setAttribute("class", "agent-edge-hit");
   hit.dataset.handoff = edgeId;
+  const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+  title.textContent = `${HANDOFF_LABELS[edgeId] || edgeId} · 点击查看交接`;
+  hit.append(title);
+  hit.addEventListener("mouseenter", () => visiblePath?.classList.add("handoff-hover"));
+  hit.addEventListener("mouseleave", () => visiblePath?.classList.remove("handoff-hover"));
   hit.addEventListener("click", (event) => {
     event.stopPropagation();
     openAgentHandoffDialog(edgeId);
@@ -1753,10 +1595,10 @@ function drawAgentEdges() {
     path.setAttribute("marker-end", "url(#arrow-head)");
     path.dataset.edge = `${edge.from}->${edge.to}`;
     svg.append(path);
-    addHandoffHitArea(svg, pathData, handoffEdgeId(edge.from, edge.to));
+    addHandoffHitArea(svg, pathData, handoffEdgeId(edge.from, edge.to), path);
   });
   graph.nodes.forEach((node) => {
-    if (node.type !== "verify" || !node.retry) return;
+    if (!node.retry) return;
     const target = agentNode(node.retry.target);
     if (!target) return;
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -1766,7 +1608,7 @@ function drawAgentEdges() {
     path.setAttribute("marker-end", "url(#arrow-retry)");
     path.dataset.edge = `${node.id}->${node.retry.target}`;
     svg.append(path);
-    addHandoffHitArea(svg, pathData, handoffEdgeId(node.id, node.retry.target));
+    addHandoffHitArea(svg, pathData, handoffEdgeId(node.id, node.retry.target), path);
   });
   applyExecutionState();
   $$("path.agent-fixed-edge", svg).forEach((path) => path.remove());
@@ -1794,7 +1636,7 @@ function drawAgentEdges() {
       path.setAttribute("d", edge.d);
       path.setAttribute("class", "agent-fixed-edge");
       svg.append(path);
-      addHandoffHitArea(svg, edge.d, edge.id);
+      addHandoffHitArea(svg, edge.d, edge.id, path);
     });
   }
 
@@ -2273,11 +2115,6 @@ function detailText(event) {
     if (event.rtl) return event.rtl;
     if (event.report) return JSON.stringify(event.report, null, 2);
     return "该步骤没有 RTL 或 TB 数据。";
-  }
-  if (state.agent.detailTab === "tools") {
-    const calls = event.tool_calls || [];
-    if (calls.length) return JSON.stringify(calls, null, 2);
-    return "该步骤没有调用工具。";
   }
   if (event.error) return `执行失败：${event.error}`;
   return event.response || (event.report ? JSON.stringify(event.report, null, 2) : "该步骤没有输出。");
@@ -3437,9 +3274,6 @@ async function loadAgentGraph() {
     api("/api/agent/state"),
   ]);
   state.agent.spec = agentState.spec || "";
-  state.agent.catalog = agentState.catalog || { builtin: [], skills: [] };
-  state.agent.skills = agentState.skills || [];
-  renderAgentSkills();
   state.agent.serverGraph = normalizeAgentGraph(server);
   state.agent.graph = JSON.parse(JSON.stringify(state.agent.serverGraph));
   state.agent.needsFit = true;

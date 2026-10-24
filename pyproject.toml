@@ -5,9 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ai-eda-lab"
 version = "0.1.0"
-description = "Single-prompt RTL generation experiment platform"
+description = "AI-assisted EDA teaching workbench"
 requires-python = ">=3.10"
 dependencies = ["openai>=1.0.0", "httpx[socks]>=0.24.0", "verilog-pad-analyzer==0.0.7"]
 
 [tool.setuptools.packages.find]
-include = ["common*"]
+include = ["ai_eda*"]

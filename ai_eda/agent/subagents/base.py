@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from common.api import RTL_SYSTEM_PROMPT, ModelClient
+from ai_eda.model.client import RTL_SYSTEM_PROMPT, ModelClient
 
 
 class RunContext:

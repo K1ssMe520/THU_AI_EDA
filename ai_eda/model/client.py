@@ -13,15 +13,7 @@ from openai import OpenAI
 
 # Prompt 实验研究“如何写 Prompt”，系统提示保持中性，不在系统层替用户约束输出格式；
 # 这样 P1 的口头需求与 P2 之后的结构化 Prompt 才有可观察的差别。
-DEFAULT_SYSTEM_PROMPT = (
-    "You are a digital IC design engineer. Follow the user's instructions."
-)
-
-# Agent 的模型节点只负责生成 RTL，因此使用更严格的系统提示。
-RTL_SYSTEM_PROMPT = (
-    "You are a digital IC engineer. Follow the user specification exactly. "
-    "Return only the requested RTL source code, without Markdown fences or explanation."
-)
+from .prompts import DEFAULT_SYSTEM_PROMPT, RTL_SYSTEM_PROMPT
 
 
 class ModelClient:

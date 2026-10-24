@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from .api import ModelClient
+from ai_eda.model.client import ModelClient
 
 # 参数实验需要模型按题面直接回答，因此使用课程助教系统提示，而不是
 # Prompt 实验里“只输出 RTL”的单次生成系统提示。

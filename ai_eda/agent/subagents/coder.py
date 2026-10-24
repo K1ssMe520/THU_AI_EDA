@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
-from common.api import RTL_SYSTEM_PROMPT
-from common.runner import extract_rtl
+from ai_eda.model.client import RTL_SYSTEM_PROMPT
+from ai_eda.rtl.runner import extract_rtl
 
 from .base import SubAgent
 from .common import safe_project_path

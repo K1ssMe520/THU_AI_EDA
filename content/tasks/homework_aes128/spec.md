@@ -102,7 +102,7 @@ ciphertext = 3925841d02dc09fbdc118597196a0b32
 - 综合与仿真必须同时满足：功能 TB 使用 `iverilog -g2012` 编译，面积/功耗 metric 使用 Yosys 0.70 映射到课程标准单元库。请使用其支持的 Verilog-2005/有限 SystemVerilog 子集：`logic`、`always_ff`、`always_comb`、`typedef enum`、`localparam`、`function` 均可用。
 - 已知 Yosys 前端限制：**函数内部不要使用 SystemVerilog 的 `return`**，请用 Verilog-2005 风格在函数体内给函数名赋值；避免动态数组、class、interface、assertion、`$readmemh` 等综合不支持的写法。否则功能 TB 可能通过，但 metric 会显示 SYNTH FAILED。
 - 复位必须为同步低有效；`start`、`ready`、`done` 的握手语义必须严格满足上文协议。
-- 教师 TB 与功耗测试脚本位于 `prompt_optimization/tasks/homework_aes128/`，学生不得修改。
+- 教师 TB 与功耗测试脚本位于 `content/tasks/homework_aes128/`，学生不得修改。
 
 ## 面积与功耗评估口径
 

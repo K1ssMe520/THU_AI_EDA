@@ -7,7 +7,6 @@
       "type": "model",
       "title": "01 · Spec Parser",
       "prompt": "判断 Spec 是否充分；缺少接口、时序、复位、延迟或测试预期时向用户提问并补充。",
-      "tools": [],
       "x": 48,
       "y": 160
     },
@@ -16,7 +15,6 @@
       "type": "model",
       "title": "02 · RTL Planner",
       "prompt": "解析 Spec，规划项目的模块结构与文件结构。",
-      "tools": [],
       "x": 320,
       "y": 160
     },
@@ -25,7 +23,6 @@
       "type": "model",
       "title": "03 · Coder",
       "prompt": "按照 RTL Planner 的文件结构，逐个完成各 RTL 文件的编写。",
-      "tools": [],
       "x": 592,
       "y": 160
     },
@@ -42,7 +39,6 @@
       "type": "model",
       "title": "05 · Modifier",
       "prompt": "根据 Tester 的失败报告修改 RTL；修复后回到 Tester 重新验证。",
-      "tools": [],
       "x": 592,
       "y": 360,
       "retry": {

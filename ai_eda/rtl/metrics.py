@@ -28,7 +28,7 @@ def _library_path() -> Path | None:
 
 def _sta_executable() -> str | None:
     """优先使用本项目安装的独立 OpenSTA，再接受用户 PATH 中的 sta。"""
-    local_sta = Path(__file__).resolve().parents[1] / ".tools" / "opensta" / "bin" / "sta"
+    local_sta = Path(__file__).resolve().parents[2] / ".tools" / "opensta" / "bin" / "sta"
     if local_sta.is_file() and local_sta.stat().st_mode & 0o111:
         return str(local_sta)
     return shutil.which("sta")

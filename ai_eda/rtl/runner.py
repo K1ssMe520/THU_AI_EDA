@@ -12,11 +12,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .api import DEFAULT_SYSTEM_PROMPT, ModelClient
-from .metrics import synthesize_metrics
+from ai_eda.config import PROJECT_ROOT, PROMPT_RUNS_ROOT, TASKS_ROOT
+from ai_eda.model.client import DEFAULT_SYSTEM_PROMPT, ModelClient
+from ai_eda.rtl.metrics import synthesize_metrics
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-RUNS_ROOT = PROJECT_ROOT / "prompt_optimization" / "runs"
+RUNS_ROOT = PROMPT_RUNS_ROOT
 
 
 def parse_testbench_output(output: str) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
@@ -416,7 +416,7 @@ def _power_testbench(task_name: str) -> tuple[Path | None, str | None]:
         return None, None
     task_directory, power_testbench_top = definition
     return (
-        PROJECT_ROOT / "prompt_optimization" / "tasks" / task_directory / "power_tb.sv",
+        TASKS_ROOT / task_directory / "power_tb.sv",
         power_testbench_top,
     )
 
