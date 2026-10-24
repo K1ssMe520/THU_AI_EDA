@@ -1,2 +1,27 @@
+# Editors and operating-system files
 .vscode/
+.idea/
+.DS_Store
+
+# Python environments, caches, and test output
+.venv/
+.env
+.env.*
 __pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Generated EDA artifacts and reproducible run records
+runs/
+build/
+*.vvp
+*.vcd
+*.saif
+*.sdf
+*.spef
+
+# Locally built toolchains (OpenSTA/OpenROAD/CUDD)
+.tools/

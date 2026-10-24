@@ -1,0 +1,341 @@
+"""RTL 生成与验证的函数式实验接口。"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import shutil
+import subprocess
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from .api import DEFAULT_SYSTEM_PROMPT, ModelClient
+from .metrics import synthesize_metrics
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+RUNS_ROOT = PROJECT_ROOT / "prompt_optimization" / "runs"
+
+
+def parse_testbench_output(output: str) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """解析教师 TB 输出的机器可读 trace 与失败检查。"""
+    trace: list[dict[str, Any]] = []
+    checks: list[dict[str, str]] = []
+    for line in output.splitlines():
+        if line.startswith("AI_EDA_TRACE|"):
+            event: dict[str, Any] = {}
+            for field in line.split("|")[1:]:
+                key, separator, value = field.partition("=")
+                if not separator:
+                    continue
+                event[key] = int(value) if key == "cycle" and value.isdigit() else value
+            trace.append(event)
+        elif line.startswith("CHECK: "):
+            name, separator, detail = line[7:].partition(" — ")
+            checks.append({"name": name, "detail": detail if separator else ""})
+    return trace, checks
+
+
+def sha256_text(text: str) -> str:
+    """返回文本的 SHA-256，便于记录实验输入与输出。"""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def extract_rtl(model_output: str) -> str:
+    """从模型输出中确定性地取出 Verilog/SystemVerilog 代码。"""
+    match = re.search(r"```(?:systemverilog|verilog|sv)?\s*\n(.*?)```", model_output, re.DOTALL | re.IGNORECASE)
+    return (match.group(1) if match else model_output).strip() + "\n"
+
+
+def _require_file(path: Path, label: str) -> Path:
+    resolved = path.resolve()
+    if not resolved.is_file():
+        raise FileNotFoundError(f"{label}不存在：{resolved}")
+    return resolved
+
+
+def _run_component(value: str, label: str) -> str:
+    """校验运行目录名称，避免覆盖操作越出 runs 目录。"""
+    if not value.strip() or value in {".", ".."} or Path(value).name != value:
+        raise ValueError(f"{label}必须是单个目录名称")
+    return value
+
+
+def create_run(
+    *,
+    task_name: str,
+    spec_path: Path,
+    testbench_path: Path,
+    testbench_top: str,
+    prompt_path: Path,
+    run_id: str,
+    temperature: float = 0.2,
+    max_tokens: int = 4096,
+    thinking: bool = False,
+    reasoning_effort: str = "high",
+    timeout_seconds: int = 20,
+    system_prompt: str | None = None,
+) -> Path:
+    """单次调用模型，保存 Prompt、原始回答、RTL 与可复现实验信息。
+
+    所有任务信息均由函数参数显式传入；本工程不读取 task.json。
+    """
+    task_name = _run_component(task_name, "task_name")
+    run_id = _run_component(run_id, "run_id")
+    if timeout_seconds <= 0:
+        raise ValueError("timeout_seconds 必须为正数")
+
+    spec_path = _require_file(spec_path, "规格文件")
+    testbench_path = _require_file(testbench_path, "测试平台文件")
+    prompt_path = _require_file(prompt_path, "Prompt 文件")
+    run_dir = RUNS_ROOT / task_name / run_id
+    if run_dir.exists():
+        shutil.rmtree(run_dir)
+    run_dir.mkdir(parents=True)
+
+    prompt = prompt_path.read_text(encoding="utf-8")
+    client = ModelClient(
+        temperature=temperature,
+        max_tokens=max_tokens,
+        thinking=thinking,
+        reasoning_effort=reasoning_effort,
+    )
+    model_response = client.generate_once_detail(prompt, system_prompt or DEFAULT_SYSTEM_PROMPT)
+    raw_response = model_response["answer"] or ""
+    reasoning = model_response["reasoning"]
+    rtl = extract_rtl(raw_response)
+
+    (run_dir / "prompt.md").write_text(prompt, encoding="utf-8")
+    (run_dir / "raw_response.txt").write_text(raw_response, encoding="utf-8")
+    if reasoning:
+        (run_dir / "reasoning.txt").write_text(reasoning, encoding="utf-8")
+    (run_dir / "generated.sv").write_text(rtl, encoding="utf-8")
+    metadata = {
+        "task_name": task_name,
+        "spec_path": str(spec_path),
+        "testbench_path": str(testbench_path),
+        "testbench_top": testbench_top,
+        "timeout_seconds": timeout_seconds,
+        "task_spec_sha256": sha256_text(spec_path.read_text(encoding="utf-8")),
+        "prompt_source": str(prompt_path),
+        "prompt_sha256": sha256_text(prompt),
+        "raw_response_sha256": sha256_text(raw_response),
+        "reasoning_available": bool(reasoning),
+        "rtl_sha256": sha256_text(rtl),
+        "model": ModelClient.MODEL_NAME,
+        "base_url": ModelClient.BASE_URL,
+        "thinking": thinking,
+        "reasoning_effort": reasoning_effort if thinking else None,
+        "temperature": None if thinking else temperature,
+        "max_tokens": max_tokens,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "generation_mode": "single_call_no_feedback",
+    }
+    (run_dir / "metadata.json").write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return run_dir
+
+
+def test_rtl(
+    *,
+    task_name: str,
+    testbench_path: Path,
+    testbench_top: str,
+    rtl_path: Path,
+    power_testbench_path: Path | None = None,
+    power_testbench_top: str | None = None,
+    timeout_seconds: int = 20,
+    run_dir: Path | None = None,
+) -> dict[str, Any]:
+    """用 Icarus Verilog 编译并运行一个 RTL 文件，返回结构化测试报告。"""
+    testbench_path = _require_file(testbench_path, "测试平台文件")
+    rtl_path = _require_file(rtl_path, "RTL 文件")
+    if timeout_seconds <= 0:
+        raise ValueError("timeout_seconds 必须为正数")
+
+    if run_dir is not None:
+        metadata_path = run_dir / "metadata.json"
+        if metadata_path.is_file():
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            expected_hash = metadata.get("rtl_sha256")
+            actual_hash = sha256_text(rtl_path.read_text(encoding="utf-8"))
+            if expected_hash and expected_hash != actual_hash:
+                raise ValueError("generated.sv 已被修改；请使用独立 RTL 路径测试或重新生成实验记录")
+
+    with tempfile.TemporaryDirectory(prefix="ai_eda_") as temp_dir:
+        temp_path = Path(temp_dir)
+        executable = temp_path / "simulation.vvp"
+        vcd_path = run_dir / "activity.vcd" if run_dir is not None else None
+        compile_result = subprocess.run(
+            [
+                "iverilog", "-g2012", "-s", testbench_top, "-o", str(executable),
+                str(testbench_path), str(rtl_path),
+            ],
+            text=True,
+            capture_output=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+        if compile_result.returncode != 0:
+            trace, checks = parse_testbench_output(compile_result.stdout)
+            return {
+                "task_name": task_name,
+                "rtl_path": str(rtl_path),
+                "passed": False,
+                "stage": "compile",
+                "return_code": compile_result.returncode,
+                "stdout": compile_result.stdout,
+                "stderr": compile_result.stderr,
+                "trace": trace,
+                "checks": checks,
+            }
+
+        simulation_result = subprocess.run(
+            ["vvp", str(executable)],
+            text=True,
+            capture_output=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+        trace, checks = parse_testbench_output(simulation_result.stdout)
+        report = {
+            "task_name": task_name,
+            "rtl_path": str(rtl_path),
+            "passed": simulation_result.returncode == 0,
+            "stage": "simulation",
+            "return_code": simulation_result.returncode,
+            "stdout": simulation_result.stdout,
+            "stderr": simulation_result.stderr,
+            "trace": trace,
+            "checks": checks,
+        }
+        if run_dir is not None:
+            if power_testbench_path is not None and power_testbench_top is not None:
+                power_testbench_path = _require_file(power_testbench_path, "功耗测试平台文件")
+                power_executable = temp_path / "power_simulation.vvp"
+                power_compile = subprocess.run(
+                    ["iverilog", "-g2012", "-s", power_testbench_top, "-o", str(power_executable), str(power_testbench_path), str(rtl_path)],
+                    text=True, capture_output=True, timeout=timeout_seconds, check=False,
+                )
+                if power_compile.returncode == 0:
+                    subprocess.run(
+                        ["vvp", str(power_executable), f"+vcd={vcd_path.resolve()}"],
+                        text=True, capture_output=True, timeout=timeout_seconds, check=False,
+                    )
+            report["metrics"] = synthesize_metrics(
+                rtl_path,
+                vcd_path=vcd_path,
+                vcd_scope=f"{power_testbench_top}/dut" if power_testbench_top else None,
+            )
+        return report
+
+
+def save_report(run_dir: Path, report: dict[str, Any]) -> Path:
+    """将测试报告保存到实验记录目录。"""
+    path = run_dir / "test_report.json"
+    path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def run_prompt_experiment(
+    *,
+    task_name: str,
+    spec_path: Path,
+    testbench_path: Path,
+    testbench_top: str,
+    power_testbench_path: Path | None = None,
+    power_testbench_top: str | None = None,
+    prompt_path: Path,
+    run_id: str,
+    temperature: float = 0.2,
+    max_tokens: int = 4096,
+    thinking: bool = False,
+    reasoning_effort: str = "high",
+    timeout_seconds: int = 20,
+    system_prompt: str | None = None,
+) -> tuple[Path, dict[str, Any]]:
+    """完成一次“单次生成 → 自动验收 → 保存报告”的 Prompt 实验。"""
+    run_dir = create_run(
+        task_name=task_name,
+        spec_path=spec_path,
+        testbench_path=testbench_path,
+        testbench_top=testbench_top,
+        prompt_path=prompt_path,
+        run_id=run_id,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        thinking=thinking,
+        reasoning_effort=reasoning_effort,
+        timeout_seconds=timeout_seconds,
+        system_prompt=system_prompt,
+    )
+    report = test_rtl(
+        task_name=task_name,
+        testbench_path=testbench_path,
+        testbench_top=testbench_top,
+        rtl_path=run_dir / "generated.sv",
+        power_testbench_path=power_testbench_path,
+        power_testbench_top=power_testbench_top,
+        timeout_seconds=timeout_seconds,
+        run_dir=run_dir,
+    )
+    save_report(run_dir, report)
+    return run_dir, report
+
+
+def retest_run(run_dir: Path) -> dict[str, Any]:
+    """根据实验记录中的显式文件路径，重新执行自动验收。"""
+    metadata_path = run_dir / "metadata.json"
+    if not metadata_path.is_file():
+        raise FileNotFoundError(f"缺少实验记录：{metadata_path}")
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    required = ("task_name", "testbench_path", "testbench_top")
+    missing = [key for key in required if not metadata.get(key)]
+    if missing:
+        raise ValueError(f"实验记录缺少必要字段：{', '.join(missing)}")
+    power_testbench_path: Path | None = None
+    power_testbench_top: str | None = None
+    if metadata["task_name"] == "classroom_seq1011":
+        power_testbench_path = PROJECT_ROOT / "prompt_optimization" / "tasks" / "classroom_seq1011" / "power_tb.sv"
+        power_testbench_top = "tb_power_classroom_seq1011"
+    report = test_rtl(
+        task_name=metadata["task_name"],
+        testbench_path=Path(metadata["testbench_path"]),
+        testbench_top=metadata["testbench_top"],
+        rtl_path=run_dir / "generated.sv",
+        power_testbench_path=power_testbench_path,
+        power_testbench_top=power_testbench_top,
+        timeout_seconds=int(metadata.get("timeout_seconds", 20)),
+        run_dir=run_dir,
+    )
+    save_report(run_dir, report)
+    return report
+
+
+def summarize_task(task_name: str) -> list[dict[str, Any]]:
+    """汇总一个任务下各次实验的测试结果。"""
+    task_run_root = RUNS_ROOT / task_name
+    if not task_run_root.exists():
+        return []
+    summaries: list[dict[str, Any]] = []
+    for run_dir in sorted(path for path in task_run_root.iterdir() if path.is_dir()):
+        metadata_path = run_dir / "metadata.json"
+        report_path = run_dir / "test_report.json"
+        if not metadata_path.is_file():
+            continue
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.is_file() else {}
+        summaries.append(
+            {
+                "run_id": run_dir.name,
+                "prompt_source": metadata.get("prompt_source"),
+                "model": metadata.get("model"),
+                "thinking": metadata.get("thinking"),
+                "passed": report.get("passed"),
+                "stage": report.get("stage"),
+            }
+        )
+    return summaries

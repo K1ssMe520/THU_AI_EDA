@@ -1,0 +1,52 @@
+{
+  "name": "简易 EDA 自动设计 Agent",
+  "entry": "spec",
+  "nodes": [
+    {
+      "id": "spec",
+      "type": "spec",
+      "title": "01 · Design Spec",
+      "prompt": "实现可编译的 SystemVerilog 模块 `rise_edge`。最终输出只能包含该 RTL 模块，不要输出 Markdown、解释、testbench 或外部模块。接口必须为：`module rise_edge(input logic clk, input logic rst_n, input logic signal, output logic pulse);`。`rst_n` 是同步低有效复位；仅在 `clk` 上升沿且 `rst_n=0` 时，将历史采样值和 `pulse` 清零。未复位时，每个 `clk` 上升沿后，若本拍采样 `signal=1` 且上一拍采样值为 0，则 `pulse=1`；其他情况 `pulse=0`。不得使用异步复位或修改接口。",
+      "x": 48.0,
+      "y": 132.0
+    },
+    {
+      "id": "designer",
+      "type": "model",
+      "title": "02 · RTL Designer",
+      "prompt": "根据以下冻结规格生成可编译的 SystemVerilog RTL。规格中的接口、时序和复位要求均为强制要求。最终输出只能包含一个 RTL 模块，不要输出 Markdown、解释、testbench 或其他模块。\n\n{spec}",
+      "x": 314.0,
+      "y": 132.0
+    },
+    {
+      "id": "verify",
+      "type": "verify",
+      "title": "03 · Compile & TB",
+      "prompt": "使用教师 testbench 编译并仿真当前生成的 RTL，记录通过状态、检查输出和 metric。",
+      "x": 580.0,
+      "y": 132.0
+    },
+    {
+      "id": "report",
+      "type": "report",
+      "title": "04 · Result Summary",
+      "prompt": "汇总当前 Agent 运行的 RTL 生成与验证结果。",
+      "x": 846.0,
+      "y": 132.0
+    }
+  ],
+  "edges": [
+    {
+      "from": "spec",
+      "to": "designer"
+    },
+    {
+      "from": "designer",
+      "to": "verify"
+    },
+    {
+      "from": "verify",
+      "to": "report"
+    }
+  ]
+}
