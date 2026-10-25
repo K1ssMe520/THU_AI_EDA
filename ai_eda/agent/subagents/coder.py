@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from ai_eda.model.client import RTL_SYSTEM_PROMPT
 from ai_eda.rtl.runner import extract_rtl
@@ -16,7 +17,17 @@ class CoderAgent(SubAgent):
     title = "03 · Coder"
     node_type = "coder"
 
-    def run(self, effective_spec: str, plan: dict) -> dict:
+    def run(self, planner_handoff: Path) -> Path:
+        incoming = self.runtime.read_handoff(planner_handoff)["payload"]
+        artifacts = incoming.get("artifacts") or {}
+        spec_ref = artifacts.get("spec")
+        plan_ref = artifacts.get("plan")
+        if not isinstance(spec_ref, str) or not isinstance(plan_ref, str):
+            raise ValueError("Planner → Coder handoff 缺少 Spec 或 Plan artifact")
+        effective_spec = self.runtime.read_text_artifact(spec_ref)
+        plan = self.runtime.read_json_artifact(plan_ref)
+        if not isinstance(plan, dict):
+            raise ValueError("Plan artifact 格式无效")
         files: dict[str, str] = {}
         for module in plan["modules"]:
             prompt = (
@@ -40,7 +51,7 @@ class CoderAgent(SubAgent):
             files[module["file"]] = rtl
             artifact_dir = self.runtime.run_dir / f"step-{event['step']:02d}-{event['node_id']}"
             (artifact_dir / "generated.sv").write_text(rtl, encoding="utf-8")
-            self.save_context(files=files, plan=plan)
+            self.save_context(plan_ref=plan_ref, last_file=self.runtime.artifact_ref(target))
             self.finish(
                 event,
                 "info",
@@ -49,17 +60,29 @@ class CoderAgent(SubAgent):
                 reasoning=event.get("reasoning"),
                 usage=event.get("usage"),
             )
-        self.runtime.write_handoff(
+        manifest = {
+            "files": [
+                {
+                    "path": path,
+                    "artifact": self.runtime.artifact_ref(
+                        safe_project_path(self.runtime.run_dir, path)
+                    ),
+                    "bytes": len(content.encode("utf-8")),
+                }
+                for path, content in files.items()
+            ]
+        }
+        manifest_ref = self.runtime.write_json_artifact("rtl_manifest.json", manifest)
+        self.save_context(plan_ref=plan_ref, rtl_manifest_ref=manifest_ref)
+        return self.runtime.write_handoff(
             "coder",
             "tester",
             {
-                "plan": plan,
-                "files": files,
-                "file_list": [
-                    {"path": path, "bytes": len(content.encode("utf-8"))}
-                    for path, content in files.items()
-                ],
+                "artifacts": {
+                    "spec": spec_ref,
+                    "plan": plan_ref,
+                    "rtl_manifest": manifest_ref,
+                },
             },
-            label="Coder → Tester：项目 RTL 文件",
+            label="Coder → Tester：RTL manifest",
         )
-        return {"files": files}

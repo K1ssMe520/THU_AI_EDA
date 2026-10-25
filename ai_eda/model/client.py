@@ -84,7 +84,7 @@ class ModelClient:
             details.append(f"thinking=enabled，reasoning_effort={self.reasoning_effort}")
         if finish_reason == "length":
             suggestion = (
-                "思考模式和长 RTL 都会消耗输出预算：请提高 max_tokens（如 8192/16384），"
+                "思考模式和长 RTL 都会消耗输出预算：请提高 max_tokens（如 16384/30000），"
                 "或在只需要 RTL 时关闭 thinking 后重试。"
             )
         else:

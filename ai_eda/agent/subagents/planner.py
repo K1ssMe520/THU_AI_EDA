@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from .base import SubAgent
 from .common import PLANNER_SYSTEM_PROMPT, extract_json_payload, validate_plan
@@ -13,7 +14,13 @@ class PlannerAgent(SubAgent):
     title = "02 · RTL Planner"
     node_type = "planner"
 
-    def run(self, effective_spec: str) -> dict:
+    def run(self, parser_handoff: Path) -> Path:
+        incoming = self.runtime.read_handoff(parser_handoff)["payload"]
+        artifacts = incoming.get("artifacts") or {}
+        spec_ref = artifacts.get("spec")
+        if not isinstance(spec_ref, str):
+            raise ValueError("Parser → Planner handoff 缺少 spec artifact")
+        effective_spec = self.runtime.read_text_artifact(spec_ref)
         prompt = (
             "根据下面的 Spec 规划 RTL 项目的模块与文件结构。每个模块必须能由一个文件独立实现；"
             "所有模块最终会一起用教师 TB 编译验收。\n\n"
@@ -26,17 +33,8 @@ class PlannerAgent(SubAgent):
             plan = validate_plan(extract_json_payload(result.get("answer") or ""))
         except ValueError as error:
             raise ValueError(f"Planner 规划无效：{error}") from error
-        self.save_context(spec=effective_spec, plan=plan)
-        (self.runtime.run_dir / "plan.json").write_text(
-            json.dumps(plan, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        self.runtime.write_handoff(
-            "planner",
-            "coder",
-            plan,
-            label="Planner → Coder：模块 / 文件计划",
-        )
+        plan_ref = self.runtime.write_json_artifact("plan.json", plan)
+        self.save_context(spec_ref=spec_ref, plan_ref=plan_ref)
         self.finish(
             event,
             "info",
@@ -44,4 +42,9 @@ class PlannerAgent(SubAgent):
             reasoning=event.get("reasoning"),
             usage=event.get("usage"),
         )
-        return plan
+        return self.runtime.write_handoff(
+            "planner",
+            "coder",
+            {"artifacts": {"spec": spec_ref, "plan": plan_ref}},
+            label="Planner → Coder：Spec / 计划 artifacts",
+        )

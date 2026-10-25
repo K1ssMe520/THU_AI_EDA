@@ -9,11 +9,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ai_eda.agent.projects import DEFAULT_PROJECT_ID, get_project, list_projects, project_public
 from ai_eda.config import (
     AGENT_CONTENT_ROOT,
     AGENT_FLOW_PATH,
     AGENT_RUNS_ROOT,
-    TASKS_ROOT,
 )
 from ai_eda.model.client import ModelClient
 from ai_eda.rtl.runner import _run_component
@@ -22,12 +22,20 @@ HANDOFF_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 AGENT_DEFINITION_PATH = AGENT_FLOW_PATH
 AGENT_DESIGNS_ROOT = AGENT_CONTENT_ROOT / "designs"
-AGENT_TASK_DIR = TASKS_ROOT / "stream_filter"
-AGENT_TASK_SPEC_PATH = AGENT_TASK_DIR / "spec.md"
 NODE_TYPES = {"model", "verify"}
 NODE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 DESIGN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 MAX_RETRIES = 5
+HANDOFF_ARTIFACT_PREVIEW_CHARS = 80_000
+
+HANDOFF_ARTIFACT_TITLES = {
+    "spec": "冻结 Spec",
+    "parser_result": "Spec 解析结果",
+    "plan": "RTL 实现计划",
+    "rtl_manifest": "RTL 文件清单",
+    "report": "验收报告",
+    "combined_rtl": "组合 RTL",
+}
 
 class AgentCancelled(RuntimeError):
     """用户主动停止 Agent 运行时抛出。"""
@@ -56,9 +64,9 @@ def load_agent_graph() -> dict[str, Any]:
 
 
 
-def agent_task_spec() -> str:
-    """固定输入：Agent 任务的公开 Spec。"""
-    return AGENT_TASK_SPEC_PATH.read_text(encoding="utf-8")
+def agent_task_spec(project_id: str | None = None) -> str:
+    """选定项目的公开 Spec。"""
+    return Path(get_project(project_id)["spec_path"]).read_text(encoding="utf-8")
 
 
 
@@ -149,9 +157,14 @@ def normalize_agent_graph(graph: Any) -> dict[str, Any]:
 
 
 
-def agent_state_payload() -> dict[str, Any]:
-    """Agent 页面初始状态：固定 Spec（Skill / function calling 暂不接入）。"""
-    return {"spec": agent_task_spec()}
+def agent_state_payload(project_id: str | None = None) -> dict[str, Any]:
+    """Agent 页面初始状态：项目列表、当前项目与 Spec。"""
+    project = get_project(project_id)
+    return {
+        "project": project_public(project),
+        "projects": list_projects(),
+        "spec": agent_task_spec(project["id"]),
+    }
 
 
 
@@ -311,10 +324,14 @@ def _run_payload(
     error: str | None = None,
     design_id: str | None = None,
     design_name: str | None = None,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
+    project = get_project(project_id)
     payload: dict[str, Any] = {
         "run_id": run_id,
         "run_dir": str(run_dir),
+        "project_id": project["id"],
+        "project": project_public(project),
         "graph": graph,
         "status": status,
         "started_at": started_at,
@@ -351,9 +368,13 @@ def _write_metadata(
     reasoning_effort: str,
     design_id: str | None = None,
     design_name: str | None = None,
+    project_id: str | None = None,
 ) -> None:
+    project = get_project(project_id)
     metadata = {
         "run_id": run_id,
+        "project_id": project["id"],
+        "project_title": project["title"],
         "agent_name": graph["name"],
         "status": status,
         "started_at": started_at,
@@ -396,6 +417,78 @@ def _read_handoff_record(path: Path) -> dict[str, Any] | None:
     if not isinstance(edge_id, str) or not HANDOFF_ID_PATTERN.fullmatch(edge_id):
         return None
     return record
+
+
+def _handoff_artifact_preview(
+    run_dir: Path,
+    reference: Any,
+    *,
+    key: str,
+    title: str | None = None,
+) -> dict[str, Any] | None:
+    """安全读取 handoff artifact，供界面展示；执行流程仍只传递引用。"""
+    if not isinstance(reference, str) or not reference.strip():
+        return None
+    root = run_dir.resolve()
+    path = (root / reference).resolve()
+    if root not in path.parents or not path.is_file():
+        return None
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    truncated = len(content) > HANDOFF_ARTIFACT_PREVIEW_CHARS
+    if truncated:
+        content = content[:HANDOFF_ARTIFACT_PREVIEW_CHARS]
+    return {
+        "key": key,
+        "title": title or HANDOFF_ARTIFACT_TITLES.get(key, key.replace("_", " ")),
+        "content": content,
+        "truncated": truncated,
+    }
+
+
+def _handoff_artifact_previews(run_dir: Path, payload: Any) -> list[dict[str, Any]]:
+    """将交接中引用的文本 artifact 展开为只读预览，供人工审阅。"""
+    if not isinstance(payload, dict):
+        return []
+    artifacts = payload.get("artifacts")
+    if not isinstance(artifacts, dict):
+        return []
+    previews: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    manifest_payload: Any = None
+    for key, reference in artifacts.items():
+        preview = _handoff_artifact_preview(run_dir, reference, key=str(key))
+        if preview is None:
+            continue
+        previews.append(preview)
+        seen.add(str(reference))
+        if key == "rtl_manifest" and not preview["truncated"]:
+            try:
+                manifest_payload = json.loads(preview["content"])
+            except json.JSONDecodeError:
+                pass
+
+    # RTL manifest 本身只列出地址；为审阅者继续展开其中实际交接的 RTL 文本。
+    entries = manifest_payload.get("files") if isinstance(manifest_payload, dict) else None
+    if isinstance(entries, list):
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            reference = entry.get("artifact")
+            if not isinstance(reference, str) or reference in seen:
+                continue
+            preview = _handoff_artifact_preview(
+                run_dir,
+                reference,
+                key="rtl_file",
+                title=f"RTL · {entry.get('path') or '未命名文件'}",
+            )
+            if preview is not None:
+                previews.append(preview)
+                seen.add(reference)
+    return previews
 
 
 
@@ -465,6 +558,7 @@ def load_agent_handoff(run_id: str, edge_id: str) -> dict[str, Any]:
                 "source": record.get("source"),
                 "target": record.get("target"),
                 "payload": record.get("payload"),
+                "artifact_previews": _handoff_artifact_previews(run_dir, record.get("payload")),
             }
         )
     if not items:
@@ -510,7 +604,14 @@ def _normalize_run_payload(payload: dict[str, Any], run_dir: Path) -> dict[str, 
     payload.setdefault("run_id", run_dir.name)
     payload.setdefault("design_id", None)
     payload.setdefault("design_name", None)
-    payload.setdefault("spec", agent_task_spec())
+    payload.setdefault("project_id", DEFAULT_PROJECT_ID)
+    try:
+        project = get_project(payload["project_id"])
+    except ValueError:
+        payload["project_id"] = DEFAULT_PROJECT_ID
+        project = get_project(DEFAULT_PROJECT_ID)
+    payload.setdefault("project", project_public(project))
+    payload.setdefault("spec", agent_task_spec(project["id"]))
     if isinstance(payload.get("graph"), dict):
         payload["graph"] = normalize_agent_graph(payload["graph"])
     if not isinstance(payload.get("result"), dict):
@@ -544,10 +645,11 @@ def load_agent_run(run_id: str) -> dict[str, Any]:
 
 
 
-def list_agent_runs(limit: int = 40) -> list[dict[str, Any]]:
-    """按时间倒序列出 Agent 运行摘要。"""
+def list_agent_runs(project_id: str | None = None, limit: int = 40) -> list[dict[str, Any]]:
+    """按时间倒序列出 Agent 运行摘要，可按项目过滤。"""
     if limit <= 0:
         return []
+    selected_project = get_project(project_id)["id"] if project_id else None
     if not AGENT_RUNS_ROOT.is_dir():
         return []
     candidates = sorted(
@@ -561,6 +663,8 @@ def list_agent_runs(limit: int = 40) -> list[dict[str, Any]]:
             payload = load_agent_run(run_dir.name)
         except (OSError, ValueError, json.JSONDecodeError):
             continue
+        if selected_project and payload.get("project_id", DEFAULT_PROJECT_ID) != selected_project:
+            continue
         events = payload.get("events") or []
         report = payload.get("report") or {}
         attempts = max((int(event.get("attempt", 1)) for event in events), default=1)
@@ -571,6 +675,7 @@ def list_agent_runs(limit: int = 40) -> list[dict[str, Any]]:
         summaries.append(
             {
                 "run_id": payload["run_id"],
+                "project_id": payload.get("project_id", DEFAULT_PROJECT_ID),
                 "agent_name": (payload.get("graph") or {}).get("name", "Agent"),
                 "design_id": payload.get("design_id"),
                 "design_name": payload.get("design_name"),
@@ -604,15 +709,24 @@ def delete_agent_run(run_id: str) -> None:
 
 
 
-def clear_agent_runs() -> int:
-    """清空全部 Agent 运行记录。"""
+def clear_agent_runs(project_id: str | None = None) -> int:
+    """清空指定项目（或全部）的 Agent 运行记录。"""
     if not AGENT_RUNS_ROOT.is_dir():
         return 0
+    selected_project = get_project(project_id)["id"] if project_id else None
     deleted = 0
     for path in AGENT_RUNS_ROOT.iterdir():
-        if path.is_dir():
-            shutil.rmtree(path)
-            deleted += 1
+        if not path.is_dir():
+            continue
+        if selected_project:
+            try:
+                payload = load_agent_run(path.name)
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+            if payload.get("project_id", DEFAULT_PROJECT_ID) != selected_project:
+                continue
+        shutil.rmtree(path)
+        deleted += 1
     return deleted
 
 

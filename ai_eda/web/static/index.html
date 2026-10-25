@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f4f7fb" />
+    <link rel="icon" href="data:,">
     <title>AI EDA · Agent Workbench</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
@@ -151,7 +152,7 @@
             <section class="editor-column">
               <article class="panel spec-panel">
                 <div class="panel-heading"><span>SPEC · 课后作业要求</span><span class="read-only">READ ONLY</span></div>
-                <pre id="hw-spec-content" class="spec-content">正在读取作业说明…</pre>
+                <div id="hw-spec-content" class="spec-content">正在读取作业说明…</div>
               </article>
 
               <article class="panel prompt-panel">
@@ -226,6 +227,8 @@
                 <span class="read-only">FIXED FLOW</span>
               </div>
               <p>Agent 流程固定在后端配置中：Parser 评估并补齐 Spec → RTL Planner 规划模块/文件 → Coder 逐文件实现 → Tester 运行教师 TB 与面积功耗评估；失败时交给 Modifier 修复后重新测试。本页面只展示固定的 Agent 设计、每一次运行过程与最终结果。</p>
+              <div id="agent-project-tabs" class="agent-project-tabs" role="tablist" aria-label="Agent 任务项目"></div>
+              <p id="agent-project-description" class="agent-project-description"></p>
             </div>
             <div class="agent-hero-actions">
               <button id="agent-stop-button" class="stop-button hidden" type="button">■ Stop</button>
@@ -266,7 +269,7 @@
                   <i class="legend-dot fixed"></i>Fixed I/O
                   <i class="legend-dash"></i>失败重试
                 </span>
-                <span class="canvas-handoff-hint">点击箭头查看子 Agent 交接</span>
+                <span class="canvas-handoff-hint">点击箭头查看交接文本</span>
                 <span id="agent-graph-stats" class="muted">0 nodes · 0 links</span>
               </div>
             </section>
@@ -279,7 +282,7 @@
                 <h3 id="agent-detail-title"></h3>
                 <div class="detail-section">
                   <span class="detail-label">Prompt / 节点说明</span>
-                  <pre id="agent-detail-prompt" class="node-detail-prompt"></pre>
+                  <div id="agent-detail-prompt" class="node-detail-prompt"></div>
                 </div>
                 <div id="agent-detail-retry-section" class="detail-section">
                   <span class="detail-label">失败回环</span>
@@ -290,11 +293,12 @@
               <div class="agent-run-config">
                 <p class="eyebrow">RUN CONFIG</p>
                 <label class="field-label inline">Temperature <input id="agent-temperature" type="number" min="0" max="2" step="0.1" value="0.2" /></label>
-                <label class="field-label inline">Max tokens <input id="agent-max-tokens" type="number" min="1" step="1" value="4096" /></label>
+                <label class="field-label inline">Max tokens <input id="agent-max-tokens" type="number" min="1" max="30000" step="1" value="30000" /></label>
+                <label class="field-label inline">Max calls <input id="agent-max-calls" type="number" min="1" max="1000" step="1" value="100" /></label>
                 <label class="field-label inline">Reasoning
-                  <select id="agent-reasoning-effort"><option value="low">low</option><option value="high" selected>high</option><option value="max">max</option></select>
+                  <select id="agent-reasoning-effort"><option value="low" selected>low</option><option value="high">high</option><option value="max">max</option></select>
                 </label>
-                <label class="switch-label"><input id="agent-thinking" type="checkbox" /><span class="switch"></span>请求模型思考文本</label>
+                <label class="switch-label"><input id="agent-thinking" type="checkbox" checked /><span class="switch"></span>请求模型思考文本</label>
               </div>
             </aside>
           </div>
@@ -305,7 +309,6 @@
               <span id="agent-run-status" class="muted">固定流程就绪，点击 Run Agent 运行</span>
             </div>
             <div id="agent-progress" class="agent-progress hidden"><div id="agent-progress-bar" class="agent-progress-bar"></div></div>
-            <div id="agent-phase-strip" class="agent-phase-strip" aria-label="Agent 流程阶段状态"></div>
             <div class="agent-console-grid">
               <div class="agent-events-pane">
                 <div class="events-header"><span>STEPS <b id="agent-event-count">0</b></span><button id="agent-follow-live" class="text-button" type="button">跟随最新</button></div>
@@ -313,18 +316,24 @@
               </div>
               <div class="agent-console-detail">
                 <div class="detail-header">
-                  <div class="response-tabs agent-console-tabs">
-                    <button class="agent-detail-tab active" data-agent-detail="prompt">发送的 Prompt</button>
-                    <button class="agent-detail-tab" data-agent-detail="reasoning">思维链</button>
-                    <button class="agent-detail-tab" data-agent-detail="response">模型回答 / 工具输出</button>
-                    <button class="agent-detail-tab" data-agent-detail="rtl">RTL / TB</button>
-                  </div>
+                  <div id="agent-detail-tabs" class="response-tabs agent-console-tabs"></div>
                   <button id="agent-copy-detail" class="text-button" type="button">复制</button>
                 </div>
                 <div id="agent-event-meta" class="agent-event-meta"></div>
                 <div id="agent-detail-content" class="agent-detail-content">选择一个运行步骤后，将在这里显示详细内容。</div>
                 <div id="agent-verify-visual" class="agent-verify-visual hidden">
+                  <div class="tool-output-head">
+                    <strong>工具输出</strong>
+                    <span>教师 Testbench · 面积 / 功耗</span>
+                  </div>
                   <div id="agent-metrics" class="metric-grid compact"></div>
+                  <div id="agent-dft-chart" class="dft-chart hidden">
+                    <div class="dft-chart-head">
+                      <strong>DFT 频谱</strong>
+                      <span>8 点 DFT · 幅值 = |Re| + |Im|</span>
+                    </div>
+                    <div id="agent-dft-bars" class="dft-bars"></div>
+                  </div>
                   <div id="agent-trace-wrap" class="trace-wrap"></div>
                   <details class="raw-output"><summary>原始 TB 输出</summary><pre id="agent-tb-stdout">—</pre></details>
                 </div>
@@ -356,7 +365,7 @@
         <h2 id="agent-handoff-title">子 Agent 交接</h2>
         <p id="agent-handoff-meta" class="field-hint"></p>
         <div id="agent-handoff-tabs" class="handoff-tabs"></div>
-        <pre id="agent-handoff-content" class="agent-handoff-content">—</pre>
+        <div id="agent-handoff-content" class="agent-handoff-content">—</div>
         <div class="dialog-actions">
           <button value="close" class="secondary-button">关闭</button>
         </div>
@@ -384,7 +393,7 @@
       <form method="dialog">
         <span class="dialog-kicker" id="agent-fixed-kind">FIXED NODE</span>
         <h2 id="agent-fixed-title">固定节点</h2>
-        <pre id="agent-fixed-content" class="agent-fixed-content"></pre>
+        <div id="agent-fixed-content" class="agent-fixed-content"></div>
         <div class="dialog-actions">
           <button value="close" class="secondary-button">关闭</button>
         </div>
@@ -402,6 +411,15 @@
       </form>
     </dialog>
     <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
-    <script src="/app.js"></script>
+    <script src="/vendor/marked-18.1.1.umd.js"></script>
+    <script src="/js/core.js"></script>
+    <script src="/js/prompt.js"></script>
+    <script src="/js/agent-graph.js"></script>
+    <script src="/js/agent-canvas.js"></script>
+    <script src="/js/agent-console.js"></script>
+    <script src="/js/agent-runs.js"></script>
+    <script src="/js/params.js"></script>
+    <script src="/js/homework.js"></script>
+    <script src="/js/main.js"></script>
   </body>
 </html>

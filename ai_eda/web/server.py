@@ -13,9 +13,10 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from ai_eda.agent.orchestrator import run_agent
+from ai_eda.agent.projects import DEFAULT_PROJECT_ID, get_project, project_public
 from ai_eda.agent.runs import (
     DESIGN_ID_PATTERN,
     AgentCancelled,
@@ -105,6 +106,18 @@ def _prompt_path(prompt_id: str) -> Path:
     if definition is None:
         raise ValueError("未知 Prompt 条件")
     return PROMPT_ROOT / definition["file"]
+
+
+def _query_value(parsed: Any, name: str, default: str | None = None) -> str | None:
+    values = parse_qs(getattr(parsed, "query", "")).get(name)
+    return values[0] if values else default
+
+
+def _project_id_from_request(request: dict[str, Any]) -> str:
+    project_id = request.get("project_id") or DEFAULT_PROJECT_ID
+    if not isinstance(project_id, str):
+        raise ValueError("project_id 必须是字符串")
+    return get_project(project_id)["id"]
 
 
 def _read_json_body(handler: SimpleHTTPRequestHandler) -> dict[str, Any]:
@@ -206,16 +219,19 @@ def _homework_options(request: dict[str, Any]) -> dict[str, Any]:
 
 
 def _agent_options(request: dict[str, Any]) -> dict[str, Any]:
-    thinking = bool(request.get("thinking", False))
-    reasoning_effort = str(request.get("reasoning_effort", "high"))
+    thinking = bool(request.get("thinking", True))
+    reasoning_effort = str(request.get("reasoning_effort", "low"))
     if reasoning_effort not in {"low", "high", "max"}:
         raise ValueError("reasoning_effort 无效")
     temperature = float(request.get("temperature", 0.2))
     if not 0 <= temperature <= 2:
         raise ValueError("temperature 必须在 0 到 2 之间")
-    max_tokens = int(request.get("max_tokens", 4096))
-    if max_tokens <= 0:
-        raise ValueError("max_tokens 必须为正整数")
+    max_tokens = int(request.get("max_tokens", 30000))
+    if not 1 <= max_tokens <= 30000:
+        raise ValueError("max_tokens 必须在 1 到 30000 之间")
+    max_calls = int(request.get("max_calls", 100))
+    if not 1 <= max_calls <= 1000:
+        raise ValueError("max_calls 必须在 1 到 1000 之间")
     design_id = request.get("design_id")
     if design_id in (None, ""):
         design_id = None
@@ -228,13 +244,16 @@ def _agent_options(request: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("design_name 必须是字符串")
     else:
         design_name = design_name.strip()[:100] or None
+    project_id = _project_id_from_request(request)
     return {
         "thinking": thinking,
         "reasoning_effort": reasoning_effort,
         "temperature": temperature,
         "max_tokens": max_tokens,
+        "max_calls": max_calls,
         "design_id": design_id,
         "design_name": design_name,
+        "project_id": project_id,
     }
 
 
@@ -245,6 +264,8 @@ def _job_public_payload(job: dict[str, Any]) -> dict[str, Any]:
         "created_at": job["created_at"],
         "updated_at": job["updated_at"],
         "run_id": job.get("run_id"),
+        "project_id": job.get("project_id"),
+        "project": (project_public(get_project(job.get("project_id"))) if job.get("project_id") else None),
         "events": job.get("events", []),
         "error": job.get("error"),
         "result": job.get("result"),
@@ -267,7 +288,7 @@ def _prune_agent_jobs() -> None:
             _AGENT_JOBS.pop(job["job_id"], None)
 
 
-def _execute_agent_job(job_id: str, graph: dict[str, Any], options: dict[str, Any]) -> None:
+def _execute_agent_job(job_id: str, options: dict[str, Any]) -> None:
     with _AGENT_JOBS_LOCK:
         job = _AGENT_JOBS.get(job_id)
         if job is None:
@@ -324,7 +345,7 @@ def _execute_agent_job(job_id: str, graph: dict[str, Any], options: dict[str, An
         run_options.update(
             {"on_event": record, "cancel_event": cancel_event, "request_input": request_input}
         )
-        result = run_agent(graph, **run_options)
+        result = run_agent(**run_options)
         with _AGENT_JOBS_LOCK:
             target = _AGENT_JOBS.get(job_id)
             if target is not None:
@@ -572,14 +593,16 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
         self.wfile.write(content)
 
     def do_GET(self) -> None:  # noqa: N802
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
+        project_id = _query_value(parsed, "project", DEFAULT_PROJECT_ID)
         try:
             if path == "/api/state":
                 self._send_json(self._state())
             elif path == f"/api/tasks/{TASK_ID}/runs":
                 self._send_json({"runs": summarize_task(TASK_ID)})
             elif path == "/api/agent/state":
-                self._send_json(agent_state_payload())
+                self._send_json(agent_state_payload(project_id))
             elif path == "/api/agent/graph":
                 self._send_json(load_agent_graph())
             elif path == "/api/agent/designs":
@@ -610,7 +633,7 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
             elif path == "/api/param-lab":
                 self._send_json(describe_param_lab())
             elif path == "/api/agent/runs":
-                self._send_json({"runs": list_agent_runs()})
+                self._send_json({"runs": list_agent_runs(project_id)})
             elif path.startswith("/api/agent/runs/") and path.endswith("/handoffs"):
                 run_id = _run_component(
                     path.removeprefix("/api/agent/runs/").removesuffix("/handoffs"),
@@ -749,13 +772,13 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
             try:
                 request = _read_json_body(self)
                 # Agent 流程固定在代码/JSON 中，网页端只提交运行参数。
-                graph = load_agent_graph()
                 options = _agent_options(request)
                 job_id = uuid.uuid4().hex[:12]
                 timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
                 with _AGENT_JOBS_LOCK:
                     _AGENT_JOBS[job_id] = {
                         "job_id": job_id,
+                        "project_id": options.get("project_id") or DEFAULT_PROJECT_ID,
                         "status": "running",
                         "created_at": timestamp,
                         "updated_at": timestamp,
@@ -770,7 +793,7 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
                     }
                 thread = threading.Thread(
                     target=_execute_agent_job,
-                    args=(job_id, graph, options),
+                    args=(job_id, options),
                     name=f"agent-job-{job_id}",
                     daemon=True,
                 )
@@ -825,9 +848,8 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
         if path == "/api/agent/run":
             try:
                 request = _read_json_body(self)
-                graph = load_agent_graph()
                 options = _agent_options(request)
-                result = run_agent(graph, **options)
+                result = run_agent(**options)
                 self._send_json(result)
             except (ValueError, FileNotFoundError, RuntimeError, json.JSONDecodeError) as error:
                 self._send_error_json(str(error))
@@ -891,7 +913,9 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
 
     def do_DELETE(self) -> None:  # noqa: N802
         """删除运行记录；路径始终限制在已登记的 runs 目录内。"""
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
+        project_id = _query_value(parsed, "project", DEFAULT_PROJECT_ID)
         if path.startswith("/api/agent/designs/"):
             try:
                 design_id = _run_component(
@@ -906,7 +930,7 @@ class WorkbenchHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/agent/runs":
             try:
-                deleted = clear_agent_runs()
+                deleted = clear_agent_runs(project_id)
                 self._send_json({"ok": True, "deleted": deleted})
             except OSError as error:
                 self._send_error_json(str(error), HTTPStatus.INTERNAL_SERVER_ERROR)

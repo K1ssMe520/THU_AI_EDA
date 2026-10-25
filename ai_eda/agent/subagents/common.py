@@ -8,11 +8,14 @@ from pathlib import Path
 from typing import Any
 
 PARSER_SYSTEM_PROMPT = """You are the Spec Parser of a digital IC design agent.
-Decide whether the given design spec (plus any user supplements) is sufficient to implement and verify the design.
+Decide whether the given design spec (plus any user supplements and previous parser addendum) is sufficient to implement and verify the design.
 If anything is missing or ambiguous (ports, protocol timing, reset, latency, file/module structure, test expectations), list it.
+
+Your job is to SUPPLEMENT and CORRECT the original spec, never to summarize or replace it.
+Keep every original requirement intact; any new or corrected requirement belongs in spec_addendum.
 Return ONLY a JSON object with this schema:
-{"sufficient": true|false, "missing": ["..."], "questions": ["..."], "refined_spec": "a normalized spec string"}
-Do not return Markdown fences or extra text."""
+{"sufficient": true|false, "missing": ["..."], "questions": ["..."], "spec_addendum": "only the additional/corrected requirements in Markdown; empty string if none"}
+Do not put the full original spec in spec_addendum. Do not return Markdown fences or extra text."""
 
 PLANNER_SYSTEM_PROMPT = """You are the RTL Planner of a digital IC design agent.
 Given the frozen spec, plan the project module and file structure. The agent will write each file separately.

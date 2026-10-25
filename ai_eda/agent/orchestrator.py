@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from ai_eda.agent.projects import get_project
 from ai_eda.agent.runs import (
     AgentCancelled,
     _now,
@@ -29,7 +30,6 @@ from ai_eda.agent.subagents.parser import ParserAgent
 from ai_eda.agent.subagents.planner import PlannerAgent
 from ai_eda.agent.subagents.tester import TesterAgent
 from ai_eda.config import AGENT_RUNS_ROOT
-from ai_eda.model.client import RTL_SYSTEM_PROMPT
 
 EventSink = Callable[[dict[str, Any]], None]
 
@@ -40,28 +40,31 @@ def _check_cancel(cancel_event: Any) -> None:
 
 
 def run_agent(
-    graph: dict[str, Any],
     *,
-    thinking: bool = False,
-    reasoning_effort: str = "high",
+    thinking: bool = True,
+    reasoning_effort: str = "low",
     temperature: float = 0.2,
-    max_tokens: int = 4096,
+    max_tokens: int = 30000,
+    max_calls: int = 100,
     on_event: EventSink | None = None,
     cancel_event: Any = None,
     design_id: str | None = None,
     design_name: str | None = None,
+    project_id: str | None = None,
     request_input: Callable[[dict[str, Any]], str] | None = None,
 ) -> dict[str, Any]:
-    """编排独立子 Agent：Parser → Planner → Coder → Tester ⇄ Modifier。
+    """运行固定流水线：Parser → Planner → Coder → Tester ⇄ Modifier。
 
-    每个子 Agent 有独立的 Python 文件、context.json 与输出目录；它们之间只通过
-    ``handoffs/<source>_to_<target>.json`` 交换数据。网页只通过 run payload 与
-    handoff API 读取过程和交接内容。
+    ``graph.json`` 只是该固定流程的只读可视化，不参与调度。每个 Agent 都从上游
+    handoff 中取得 artifact 引用，再按引用读取 Spec、RTL 或报告内容。
     """
     graph = load_agent_graph()
     if reasoning_effort not in {"low", "high", "max"}:
         raise ValueError("reasoning_effort 无效")
-    spec_base = agent_task_spec()
+    if not 1 <= int(max_calls) <= 1000:
+        raise ValueError("max_calls 必须在 1 到 1000 之间")
+    project = get_project(project_id)
+    spec_base = agent_task_spec(project["id"])
     run_id = f"agent-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')}"
     run_dir = AGENT_RUNS_ROOT / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -77,7 +80,7 @@ def run_agent(
     effective_spec = spec_base
     parser_result: dict[str, Any] = {}
     plan: dict[str, Any] | None = None
-    files: dict[str, str] = {}
+    files: list[dict[str, Any]] = []
     tester_attempts = 0
 
     def persist(status: str = "running", error: str | None = None) -> None:
@@ -96,6 +99,7 @@ def run_agent(
                 error=error,
                 design_id=design_id,
                 design_name=design_name,
+                project_id=project["id"],
             ),
         )
 
@@ -146,6 +150,7 @@ def run_agent(
                 "max_tokens": max_tokens,
                 "thinking": thinking,
                 "reasoning_effort": reasoning_effort,
+                "project": project,
             },
             begin_event=begin_event,
             finish_event=finish_event,
@@ -153,43 +158,66 @@ def run_agent(
             emit=emit,
             check_cancel=check_cancel,
             request_input=request_input,
+            max_calls=max_calls,
         )
-        context.write_handoff(
+        spec_ref = context.write_text_artifact("spec.md", spec_base)
+        initial_handoff = context.write_handoff(
             "spec",
             "parser",
-            {"task": "stream_filter", "spec": spec_base},
-            label="固定 Spec → Parser",
+            {"task": project["id"], "artifacts": {"spec": spec_ref}},
+            label="固定 Spec → Parser：Spec artifact",
         )
 
         parser = ParserAgent(context)
-        parser_result = parser.run(spec_base)
-        effective_spec = parser_result["effective_spec"]
+        parser_handoff = parser.run(initial_handoff)
 
         planner = PlannerAgent(context)
-        plan = planner.run(effective_spec)
+        planner_handoff = planner.run(parser_handoff)
 
         coder = CoderAgent(context)
-        coder_result = coder.run(effective_spec, plan)
-        files = coder_result["files"]
+        next_tester_input = coder.run(planner_handoff)
 
         tester = TesterAgent(context)
         modifier = ModifierAgent(context)
         while True:
             tester_attempts += 1
-            report = tester.run(plan, files, tester_attempts)
+            tester_handoff = tester.run(next_tester_input, tester_attempts)
+            tester_payload = context.read_handoff(tester_handoff)["payload"]
+            tester_artifacts = tester_payload.get("artifacts") or {}
+            report_ref = tester_artifacts.get("report")
+            if not isinstance(report_ref, str):
+                raise ValueError("Tester handoff 缺少报告 artifact")
+            report = context.read_json_artifact(report_ref)
+            if not isinstance(report, dict):
+                raise ValueError("Tester 报告 artifact 格式无效")
             final_report = report
             if report.get("passed"):
                 break
             if tester_attempts >= 3:
                 break
             check_cancel()
-            changed = modifier.run(
-                effective_spec, plan, files, report, tester_attempts
-            )
-            files.update(changed)
+            next_tester_input = modifier.run(tester_handoff, tester_attempts)
 
         if final_report is None:
             raise ValueError("Tester 没有产出验收报告")
+        final_handoff = context.read_handoff(tester_handoff)["payload"]
+        final_artifacts = final_handoff.get("artifacts") or {}
+        spec_ref = final_artifacts.get("spec")
+        plan_ref = final_artifacts.get("plan")
+        manifest_ref = final_artifacts.get("rtl_manifest")
+        if not all(isinstance(ref, str) for ref in (spec_ref, plan_ref, manifest_ref)):
+            raise ValueError("最终 handoff 缺少 Spec、Plan 或 RTL manifest artifact")
+        effective_spec = context.read_text_artifact(spec_ref)
+        plan = context.read_json_artifact(plan_ref)
+        manifest = context.read_json_artifact(manifest_ref)
+        if not isinstance(plan, dict) or not isinstance(manifest, dict):
+            raise ValueError("最终 artifact 格式无效")
+        files = manifest.get("files") if isinstance(manifest.get("files"), list) else []
+        parser_payload = context.read_handoff(parser_handoff)["payload"]
+        parser_result_ref = (parser_payload.get("artifacts") or {}).get("parser_result")
+        if isinstance(parser_result_ref, str):
+            parsed = context.read_json_artifact(parser_result_ref)
+            parser_result = parsed if isinstance(parsed, dict) else {}
         passed = bool(final_report.get("passed"))
         final_result = {
             "passed": passed,
@@ -198,26 +226,12 @@ def run_agent(
             "metrics": final_report.get("metrics") or {},
             "spec": effective_spec,
             "plan": plan,
-            "files": [
-                {"path": path, "bytes": len(content.encode("utf-8"))}
-                for path, content in files.items()
-            ],
+            "files": files,
             "parser_rounds": parser_result.get("rounds", 1),
             "supplements": parser_result.get("supplements", []),
             "tester_attempts": tester_attempts,
         }
         _write_json(run_dir / "result.json", final_result)
-        context.write_handoff(
-            "tester",
-            "summary",
-            {
-                "result": final_result,
-                "report": final_report,
-                "summary": _report_summary(final_report),
-            },
-            attempt=tester_attempts,
-            label="Tester → Summary：最终验收结果",
-        )
         current_status = "passed" if passed else "failed"
     except AgentCancelled as error:
         current_status = "cancelled"
@@ -240,6 +254,7 @@ def run_agent(
             error=str(error),
             design_id=design_id,
             design_name=design_name,
+            project_id=project["id"],
         )
         payload["duration_ms"] = round((time.perf_counter() - started_clock) * 1000)
         _write_json(run_dir / "events.json", payload)
@@ -258,6 +273,7 @@ def run_agent(
                 reasoning_effort=reasoning_effort,
                 design_id=design_id,
                 design_name=design_name,
+                project_id=project["id"],
             )
         except Exception:
             pass
@@ -283,6 +299,7 @@ def run_agent(
             error=str(error),
             design_id=design_id,
             design_name=design_name,
+            project_id=project["id"],
         )
         payload["duration_ms"] = round((time.perf_counter() - started_clock) * 1000)
         _write_json(run_dir / "events.json", payload)
@@ -301,6 +318,7 @@ def run_agent(
                 reasoning_effort=reasoning_effort,
                 design_id=design_id,
                 design_name=design_name,
+                project_id=project["id"],
             )
         except Exception:
             pass
@@ -319,6 +337,7 @@ def run_agent(
         spec=effective_spec,
         design_id=design_id,
         design_name=design_name,
+        project_id=project["id"],
     )
     payload["duration_ms"] = round((time.perf_counter() - started_clock) * 1000)
     _write_json(run_dir / "events.json", payload)
@@ -336,6 +355,7 @@ def run_agent(
         reasoning_effort=reasoning_effort,
         design_id=design_id,
         design_name=design_name,
+        project_id=project["id"],
     )
     return payload
 
