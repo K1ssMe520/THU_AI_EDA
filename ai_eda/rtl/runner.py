@@ -19,6 +19,20 @@ from ai_eda.rtl.metrics import synthesize_metrics
 RUNS_ROOT = PROMPT_RUNS_ROOT
 
 
+def _cpu_feature_compile_flags(rtl_path: Path) -> list[str]:
+    """仅在 rv32i5 顶层真的声明特征输出时启用扩展 TB 接口。"""
+    source = rtl_path.read_text(encoding="utf-8")
+    source = re.sub(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"', " ", source, flags=re.DOTALL)
+    module = re.search(r"\bmodule\s+rv32i5\b(.*?)\bendmodule\b", source, flags=re.DOTALL)
+    if module and re.search(
+        r"\boutput\b(?:(?!\b(?:input|output|inout)\b)[^;)])*\bdbg_features\b",
+        module.group(1),
+        flags=re.DOTALL,
+    ):
+        return ["-DRV32I_FEATURE_PORTS"]
+    return []
+
+
 def parse_testbench_output(output: str) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     """解析教师 TB 输出的机器可读 trace 与失败检查。"""
     trace: list[dict[str, Any]] = []
@@ -36,6 +50,58 @@ def parse_testbench_output(output: str) -> tuple[list[dict[str, Any]], list[dict
             name, separator, detail = line[7:].partition(" — ")
             checks.append({"name": name, "detail": detail if separator else ""})
     return trace, checks
+
+
+def _testbench_fields(line: str) -> dict[str, Any]:
+    """读取 TB 的 key=value 协议，同时保留名称与状态字符串。"""
+    fields: dict[str, Any] = {}
+    for field in line.split("|")[1:]:
+        key, separator, value = field.partition("=")
+        if not separator or not key:
+            continue
+        value = value.strip()
+        if re.fullmatch(r"-?\d+", value):
+            fields[key] = int(value)
+        elif re.fullmatch(r"-?\d+\.\d+(?:[eE][+-]?\d+)?", value):
+            fields[key] = float(value)
+        else:
+            fields[key] = value
+    return fields
+
+
+def parse_cpu_testbench_output(output: str) -> dict[str, Any]:
+    """汇总公共 CPU TB 的层级、测试组和性能，旧 TB 无输出时返回空对象。"""
+    capability: dict[str, Any] = {}
+    suites: list[dict[str, Any]] = []
+    benchmarks: list[dict[str, Any]] = []
+    for line in output.splitlines():
+        if line.startswith("AI_EDA_CAPABILITY|"):
+            capability.update(_testbench_fields(line))
+        elif line.startswith("AI_EDA_SUITE|"):
+            suite = _testbench_fields(line)
+            for key in ("passed", "skipped"):
+                if key in suite:
+                    suite[key] = suite[key] in (1, True, "true", "PASS", "pass")
+            suites.append(suite)
+        elif line.startswith("AI_EDA_PERF|"):
+            benchmark = _testbench_fields(line)
+            cycles = benchmark.get("cycles")
+            instructions = benchmark.get("instructions")
+            if isinstance(cycles, (int, float)) and cycles > 0 and isinstance(instructions, (int, float)) and instructions > 0:
+                benchmark["cpi"] = round(cycles / instructions, 6)
+                benchmark["ipc"] = round(instructions / cycles, 6)
+            benchmarks.append(benchmark)
+    result: dict[str, Any] = {}
+    if capability:
+        for name in ("declared", "verified", "expected"):
+            if name in capability:
+                capability.setdefault(f"{name}_level", capability[name])
+        result["cpu_capability"] = capability
+    if suites:
+        result["test_suites"] = suites
+    if benchmarks:
+        result["performance"] = {"benchmarks": benchmarks}
+    return result
 
 
 def sha256_text(text: str) -> str:
@@ -237,12 +303,16 @@ def test_rtl(
     power_testbench_top: str | None = None,
     timeout_seconds: int = 20,
     run_dir: Path | None = None,
+    expected_cpu_level: int | None = None,
+    rtl_top_module: str | None = None,
 ) -> dict[str, Any]:
     """用 Icarus Verilog 编译并运行一个 RTL 文件，返回结构化测试报告。"""
     testbench_path = _require_file(testbench_path, "测试平台文件")
     rtl_path = _require_file(rtl_path, "RTL 文件")
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds 必须为正数")
+    if expected_cpu_level is not None and (type(expected_cpu_level) is not int or expected_cpu_level not in range(4)):
+        raise ValueError("expected_cpu_level 必须为 0、1、2 或 3")
 
     if run_dir is not None:
         metadata_path = run_dir / "metadata.json"
@@ -257,9 +327,10 @@ def test_rtl(
         temp_path = Path(temp_dir)
         executable = temp_path / "simulation.vvp"
         vcd_path = run_dir / "activity.vcd" if run_dir is not None else None
+        feature_flags = _cpu_feature_compile_flags(rtl_path)
         compile_result = subprocess.run(
             [
-                "iverilog", "-g2012", "-s", testbench_top, "-o", str(executable),
+                "iverilog", "-g2012", *feature_flags, "-I", str(testbench_path.parent), "-s", testbench_top, "-o", str(executable),
                 str(testbench_path), str(rtl_path),
             ],
             text=True,
@@ -281,8 +352,11 @@ def test_rtl(
                 "checks": checks,
             }
 
+        simulation_command = ["vvp", str(executable)]
+        if expected_cpu_level is not None:
+            simulation_command.append(f"+expected_cpu_level={expected_cpu_level}")
         simulation_result = subprocess.run(
-            ["vvp", str(executable)],
+            simulation_command,
             text=True,
             capture_output=True,
             timeout=timeout_seconds,
@@ -300,12 +374,17 @@ def test_rtl(
             "trace": trace,
             "checks": checks,
         }
+        report.update(parse_cpu_testbench_output(simulation_result.stdout))
+        if expected_cpu_level is not None:
+            report.setdefault("cpu_capability", {})["expected_level"] = expected_cpu_level
+        if any(not suite["passed"] for suite in report.get("test_suites", []) if "passed" in suite and not suite.get("skipped")):
+            report["passed"] = False
         if run_dir is not None:
             if power_testbench_path is not None and power_testbench_top is not None:
                 power_testbench_path = _require_file(power_testbench_path, "功耗测试平台文件")
                 power_executable = temp_path / "power_simulation.vvp"
                 power_compile = subprocess.run(
-                    ["iverilog", "-g2012", "-s", power_testbench_top, "-o", str(power_executable), str(power_testbench_path), str(rtl_path)],
+                    ["iverilog", "-g2012", *feature_flags, "-I", str(power_testbench_path.parent), "-s", power_testbench_top, "-o", str(power_executable), str(power_testbench_path), str(rtl_path)],
                     text=True, capture_output=True, timeout=timeout_seconds, check=False,
                 )
                 if power_compile.returncode == 0:
@@ -317,6 +396,7 @@ def test_rtl(
                 rtl_path,
                 vcd_path=vcd_path,
                 vcd_scope=f"{power_testbench_top}/dut" if power_testbench_top else None,
+                top_module=rtl_top_module,
             )
         return report
 
@@ -431,6 +511,7 @@ def run_testbench(run_dir: Path) -> dict[str, Any]:
         testbench_top=metadata["testbench_top"],
         rtl_path=rtl_path,
         timeout_seconds=int(metadata.get("timeout_seconds", 20)),
+        expected_cpu_level=metadata.get("expected_cpu_level"),
     )
     previous = _read_report(run_dir)
     if "metrics" in previous:
@@ -455,7 +536,7 @@ def evaluate_metrics(run_dir: Path) -> dict[str, Any]:
                 executable = temp_path / "power_simulation.vvp"
                 compile_result = subprocess.run(
                     [
-                        "iverilog", "-g2012", "-s", power_testbench_top, "-o", str(executable),
+                        "iverilog", "-g2012", *_cpu_feature_compile_flags(rtl_path), "-I", str(resolved_testbench.parent), "-s", power_testbench_top, "-o", str(executable),
                         str(resolved_testbench), str(rtl_path),
                     ],
                     text=True, capture_output=True, timeout=timeout_seconds, check=False,
@@ -502,6 +583,7 @@ def retest_run(run_dir: Path) -> dict[str, Any]:
         power_testbench_top=power_testbench_top,
         timeout_seconds=int(metadata.get("timeout_seconds", 20)),
         run_dir=run_dir,
+        expected_cpu_level=metadata.get("expected_cpu_level"),
     )
     save_report(run_dir, report)
     return report

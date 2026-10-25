@@ -485,6 +485,136 @@ function metricCard(label, value, note, tone = "") {
   return card;
 }
 
+const CPU_REPORT_LABELS = {
+  expected_level: "目标层级",
+  declared_level: "声明层级",
+  verified_level: "验证层级",
+  observed_level: "观测层级",
+  level: "层级",
+  features: "特性",
+  cache: "I/D Cache",
+  predictor: "分支预测",
+  ooo: "乱序执行",
+  branch_predictor: "分支预测",
+  out_of_order: "乱序执行",
+  checks: "检查数",
+  name: "名称",
+};
+
+function cpuReportValue(value) {
+  if (Array.isArray(value)) return value.join("、");
+  if (value && typeof value === "object") return Object.entries(value).map(([key, item]) => `${key}: ${item}`).join(" · ");
+  return String(value ?? "—");
+}
+
+function cpuReportSection(title) {
+  const section = document.createElement("section");
+  section.className = "cpu-report-section";
+  const heading = document.createElement("h4");
+  heading.textContent = title;
+  section.append(heading);
+  return section;
+}
+
+function renderAgentCpuSummary(report) {
+  const panel = $("#agent-cpu-summary");
+  if (!panel) return;
+  panel.replaceChildren();
+  const capability = report.cpu_capability && typeof report.cpu_capability === "object"
+    ? report.cpu_capability : {};
+  const suites = Array.isArray(report.test_suites) ? report.test_suites : [];
+  const benchmarks = Array.isArray(report.performance?.benchmarks) ? report.performance.benchmarks : [];
+  if (!Object.keys(capability).length && !suites.length && !benchmarks.length) {
+    panel.classList.add("hidden");
+    return;
+  }
+  panel.classList.remove("hidden");
+
+  const heading = document.createElement("div");
+  heading.className = "cpu-report-head";
+  const title = document.createElement("strong");
+  title.textContent = "CPU 能力与性能";
+  const detail = document.createElement("span");
+  const level = capability.verified_level ?? capability.observed_level ?? capability.declared_level ?? capability.level;
+  detail.textContent = level === undefined ? "分层验收" : `已识别 L${level}`;
+  heading.append(title, detail);
+  panel.append(heading);
+
+  if (Object.keys(capability).length) {
+    const section = cpuReportSection("能力识别");
+    const grid = document.createElement("div");
+    grid.className = "cpu-capability-grid";
+    const preferred = ["expected_level", "declared_level", "verified_level", "observed_level", "features", "name"];
+    const entries = Object.entries(capability).filter(([key]) => preferred.includes(key));
+    if (!entries.length && capability.level !== undefined) entries.push(["level", capability.level]);
+    entries.forEach(([key, value]) => {
+      const item = document.createElement("div");
+      const label = document.createElement("span");
+      label.textContent = CPU_REPORT_LABELS[key] || key.replaceAll("_", " ");
+      const result = document.createElement("b");
+      result.textContent = key.endsWith("level") || key === "level" ? `L${cpuReportValue(value)}` : cpuReportValue(value);
+      item.append(label, result);
+      grid.append(item);
+    });
+    section.append(grid);
+    panel.append(section);
+  }
+
+  if (suites.length) {
+    const section = cpuReportSection("验收测试组");
+    const list = document.createElement("div");
+    list.className = "cpu-suite-list";
+    suites.forEach((suite) => {
+      const row = document.createElement("div");
+      const skipped = Boolean(suite.skipped);
+      row.className = `cpu-suite ${skipped ? "skip" : suite.passed === false ? "fail" : "pass"}`;
+      const name = document.createElement("strong");
+      name.textContent = suite.name || suite.suite || "测试组";
+      const status = document.createElement("span");
+      status.textContent = skipped ? "SKIP" : suite.passed === false ? "FAIL" : "PASS";
+      const note = document.createElement("small");
+      note.textContent = suite.checks ?? suite.detail ?? "";
+      row.append(name, status, note);
+      list.append(row);
+    });
+    section.append(list);
+    panel.append(section);
+  }
+
+  if (benchmarks.length) {
+    const section = cpuReportSection("性能基准");
+    const table = document.createElement("table");
+    table.className = "cpu-performance-table";
+    const head = document.createElement("thead");
+    const row = document.createElement("tr");
+    ["基准", "Cycles", "Retired", "CPI", "IPC"].forEach((text) => {
+      const cell = document.createElement("th");
+      cell.textContent = text;
+      row.append(cell);
+    });
+    head.append(row);
+    const body = document.createElement("tbody");
+    benchmarks.forEach((benchmark) => {
+      const line = document.createElement("tr");
+      [
+        benchmark.benchmark || benchmark.name || "benchmark",
+        benchmark.cycles ?? "—",
+        benchmark.instructions ?? benchmark.retired ?? "—",
+        Number.isFinite(Number(benchmark.cpi)) ? Number(benchmark.cpi).toFixed(3) : "—",
+        Number.isFinite(Number(benchmark.ipc)) ? Number(benchmark.ipc).toFixed(3) : "—",
+      ].forEach((value) => {
+        const cell = document.createElement("td");
+        cell.textContent = String(value);
+        line.append(cell);
+      });
+      body.append(line);
+    });
+    table.append(head, body);
+    section.append(table);
+    panel.append(section);
+  }
+}
+
 function renderAgentVerifyVisual(report) {
   const metrics = report.metrics || {};
   const container = $("#agent-metrics");
@@ -501,6 +631,7 @@ function renderAgentVerifyVisual(report) {
   }
   const stage = report.stage === "compile" ? "COMPILE" : "SIMULATION";
   container.append(metricCard("Result", report.passed ? "PASS" : "FAIL", stage, report.passed ? "success" : "failure"));
+  renderAgentCpuSummary(report);
   renderAgentDftSpectrum(report);
   renderAgentTrace(report);
   $("#agent-tb-stdout").textContent = [report.stdout, report.stderr].filter(Boolean).join("\n") || "—";

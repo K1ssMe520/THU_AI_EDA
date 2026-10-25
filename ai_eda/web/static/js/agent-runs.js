@@ -176,7 +176,7 @@ function renderAgentComparison(runs) {
   table.className = "compare-table";
   const head = document.createElement("thead");
   const headRow = document.createElement("tr");
-  ["运行", "结果", "轮次", "耗时", "Tokens", "Area / Power"].forEach((label, index) => {
+  ["运行", "结果", "轮次", "耗时", "Tokens", "CPU / CPI", "Area / Power"].forEach((label, index) => {
     const th = document.createElement("th");
     th.textContent = label;
     if (index >= 2) th.className = "compare-num";
@@ -207,6 +207,9 @@ function renderAgentComparison(runs) {
     addCell(`${run.attempts ?? 1}`, "compare-num");
     addCell(formatDuration(run.duration_ms), "compare-num");
     addCell(run.total_tokens ? `${run.total_tokens}` : "—", "compare-num");
+    const level = run.cpu_level === null || run.cpu_level === undefined ? "—" : `L${run.cpu_level}`;
+    const cpi = run.cpu_cpi === null || run.cpu_cpi === undefined ? "—" : Number(run.cpu_cpi).toFixed(3);
+    addCell(`${level} / ${cpi}`, "compare-num compare-metric");
     const area = run.area !== null && run.area !== undefined ? Number(run.area).toFixed(3) : "—";
     const power = run.total_power_w !== null && run.total_power_w !== undefined
       ? `${(Number(run.total_power_w) * 1e6).toFixed(3)} µW`

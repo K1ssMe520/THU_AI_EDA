@@ -23,16 +23,41 @@ _PROJECTS: dict[str, dict[str, Any]] = {
     },
     "rv32i5": {
         "id": "rv32i5",
-        "title": "课后作业：RV32I 五级流水线处理器",
-        "description": "RV32I 五级流水线，包含数据前递、load-use、分支 flush 与 ECALL 停机。",
+        "title": "RV32I · L0 基础五级流水线",
+        "description": "基础 RV32I 五级流水线：前递、load-use、分支 flush；与进阶层共用教师 TB 和性能基准。",
         "spec_path": TASKS_ROOT / "homework_rv32i5" / "spec.md",
         "testbench_path": TASKS_ROOT / "homework_rv32i5" / "tb.sv",
         "testbench_top": "tb_agent_rv32i5",
         "power_testbench_path": TASKS_ROOT / "homework_rv32i5" / "power_tb.sv",
         "power_testbench_top": "tb_power_agent_rv32i5",
         "task_name": "agent_rv32i5",
+        "expected_cpu_level": 0,
     },
 }
+
+# 四个项目只选择不同的设计要求；教师测试入口及性能口径保持一致。
+for _project_id, _level, _title, _description, _spec_file in (
+    (
+        "rv32i5_cache", 1, "RV32I · L1 I/D Cache",
+        "基础流水线 + 分离 I/D Cache：缓存命中、冲突替换、字节写与 miss 停顿。", "cache.md",
+    ),
+    (
+        "rv32i5_predict", 2, "RV32I · L2 Cache + 分支预测",
+        "I/D Cache + 动态分支预测：BTB/BHT、预测训练、误预测恢复与错误路径副作用隔离。", "predict.md",
+    ),
+    (
+        "rv32i5_ooo", 3, "RV32I · L3 Cache + 预测 + 乱序",
+        "缓存与预测 + 重命名、乱序执行、ROB 顺序提交，验证内存顺序与精确恢复。", "ooo.md",
+    ),
+):
+    _PROJECTS[_project_id] = {
+        **_PROJECTS["rv32i5"],
+        "id": _project_id,
+        "title": _title,
+        "description": _description,
+        "spec_path": TASKS_ROOT / "homework_rv32i5" / "specs" / _spec_file,
+        "expected_cpu_level": _level,
+    }
 
 
 def get_project(project_id: str | None = None) -> dict[str, Any]:
@@ -44,20 +69,26 @@ def get_project(project_id: str | None = None) -> dict[str, Any]:
     return dict(project)
 
 
-def list_projects() -> list[dict[str, str]]:
+def list_projects() -> list[dict[str, Any]]:
     """返回给前端展示的项目元数据，不暴露内部路径。"""
-    return [
-        {"id": item["id"], "title": item["title"], "description": item["description"]}
-        for item in _PROJECTS.values()
-    ]
+    return [project_public(item) for item in _PROJECTS.values()]
 
 
 def project_public(project: dict[str, Any]) -> dict[str, Any]:
-    return {
+    public = {
         "id": project["id"],
         "title": project["title"],
         "description": project["description"],
     }
+    if "expected_cpu_level" in project:
+        public["expected_cpu_level"] = project["expected_cpu_level"]
+        public["cpu_level_label"] = {
+            0: "L0 · 基础流水线",
+            1: "L1 · I/D Cache",
+            2: "L2 · Cache + 分支预测",
+            3: "L3 · Cache + 预测 + 乱序",
+        }[project["expected_cpu_level"]]
+    return public
 
 
 def project_spec(project_id: str | None = None) -> str:

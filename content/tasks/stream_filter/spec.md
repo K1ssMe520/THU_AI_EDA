@@ -1,6 +1,6 @@
 # Agent 复杂任务：带校验和的同步字节流缓冲器
 
-实现一个多模块 SystemVerilog 项目：8 字节同步 FIFO + 16-bit 递增校验和 + 顶层 `stream_filter`。教师 TB 只通过顶层接口验收，但项目中必须存在下面三个模块，并放在指定文件中。
+实现一个多模块 SystemVerilog 项目：8 字节同步 FIFO + 16-bit 递增校验和 + 顶层 `stream_filter`。项目中必须存在下面三个模块，并放在指定文件中。
 
 ## 顶层接口（必须完全一致）
 
@@ -22,13 +22,12 @@ module stream_filter (
 ## 功能与握手
 
 1. 数据按字节进入 FIFO，按接收顺序从 `out_data` 输出。
-2. `in_ready = 1` 表示 FIFO 未满。`in_valid && in_ready` 在 `clk` 上升沿成立时接收 `in_data`；FIFO 满时 `in_ready=0`，输入被忽略。
-3. `out_valid=1` 表示 FIFO 非空；`out_data` 是第一字直通（first-word fall-through）的队头字节。`out_valid && out_ready` 在上升沿完成一次读取，下一拍输出下一字节；FIFO 为空时 `out_valid=0`，`out_data` 不要求有效。
-4. 允许同一上升沿同时读写（FIFO 未满且非空时），读写各自独立计数，不得丢失、重复或重排数据。
-5. `checksum` 是已接收字节的 16-bit 累加和（模 65536）：每接收一个 `in_data`，在接收的上升沿更新 `checksum <= checksum + in_data`；复位后 `checksum=0`。TB 在上升沿后采样。
-6. `count` 是 FIFO 当前占用量，范围 0..8；满时为 8，空时为 0。
-7. `rst_n` 是同步低有效复位：在 `clk` 上升沿采样到 `rst_n=0` 时清空 FIFO、`checksum` 和 `count`，并令 `out_valid=0`、`in_ready=1`。`rst_n` 在两个上升沿之间变化时，寄存器输出保持不变；禁止异步复位。
-8. 时钟按 10 ns 周期驱动；FIFO 深度固定为 8，数据位宽固定为 8。
+2. `out_valid=1` 表示 FIFO 非空；`out_data` 是第一字直通（first-word fall-through）的队头字节。`out_valid && out_ready` 在上升沿完成一次读取，下一拍输出下一字节；FIFO 为空时 `out_valid=0`，`out_data` 不要求有效。
+3. 允许同一上升沿同时读写（FIFO 未满且非空时），读写各自独立计数，不得丢失、重复或重排数据。
+4. `checksum` 是已接收字节的 16-bit 累加和（模 65536）：每接收一个 `in_data`，在接收的上升沿更新 `checksum <= checksum + in_data`；复位后 `checksum=0`；在上升沿后采样。
+5. `count` 是 FIFO 当前占用量，范围 0..8；满时为 8，空时为 0。
+6. `rst_n` 是同步低有效复位：在 `clk` 上升沿采样到 `rst_n=0` 时清空 FIFO、`checksum` 和 `count`，并令 `out_valid=0`、`in_ready=1`。`rst_n` 在两个上升沿之间变化时，寄存器输出保持不变；禁止异步复位。
+7. 时钟按 10 ns 周期驱动；FIFO 深度固定为 8，数据位宽固定为 8。
 
 ## 必须实现的模块与文件
 
@@ -56,7 +55,7 @@ module sync_fifo #(
 - `dout` 必须是 first-word fall-through：`empty=0` 时直接给出当前队头数据。
 - `full = (count == DEPTH)`，`empty = (count == 0)`，`count` 为占用字节数。
 - 同步低有效复位；`wr_en`/`rd_en` 在同一拍同时有效时要正确处理。
-- 该模块会被教师 TB 直接例化检查接口，不能改名或省略。
+- 该模块接口必须保持固定，不能改名或省略。
 
 ### `rtl/checksum_acc.sv`
 
@@ -76,16 +75,6 @@ module checksum_acc (
 
 - 顶层 `stream_filter`，例化 `sync_fifo` 与 `checksum_acc`，连接上面定义的端口与功能。
 - 不得修改文件名、模块名或端口；不得使用外部文件、`include`、`$readmemh` 或 DPI。
-
-## 教师 TB 会检查
-
-- 同步复位与复位期间输出；
-- 连续写入 8 字节后满标志与 `in_ready` 行为；
-- 输出顺序、`out_valid` 与反压时数据稳定；
-- 同拍读写、跨满/空边界的连续流；
-- 中途复位并重新开始；
-- `checksum` 对已接收字节的累加结果；
-- 编译所有项目文件并检查 `sync_fifo` / `checksum_acc` 接口存在。
 
 ## 实现约束
 

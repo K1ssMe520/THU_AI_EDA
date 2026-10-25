@@ -105,7 +105,13 @@ def _parse_power_report(report: str) -> dict[str, float] | None:
     }
 
 
-def synthesize_metrics(rtl_path: Path, *, vcd_path: Path | None = None, vcd_scope: str | None = None) -> dict[str, Any]:
+def synthesize_metrics(
+    rtl_path: Path,
+    *,
+    vcd_path: Path | None = None,
+    vcd_scope: str | None = None,
+    top_module: str | None = None,
+) -> dict[str, Any]:
     """评估映射面积，并在有 OpenROAD 和 VCD 时估算活动相关功耗。
 
     面积来自 Yosys 对同一 Liberty 的技术映射；功耗由独立 OpenSTA 读取
@@ -120,7 +126,9 @@ def synthesize_metrics(rtl_path: Path, *, vcd_path: Path | None = None, vcd_scop
     if not rtl_path.is_file():
         return {"status": "unavailable", "reason": f"RTL 不存在：{rtl_path}"}
 
-    top_module = _top_module(rtl_path)
+    if top_module is not None and not re.fullmatch(r"[A-Za-z_]\w*", top_module):
+        raise ValueError("RTL 顶层模块名无效")
+    top_module = top_module or _top_module(rtl_path)
     with tempfile.TemporaryDirectory(prefix="ai_eda_metrics_") as temp_dir:
         work_dir = Path(temp_dir)
         try:

@@ -672,6 +672,17 @@ def list_agent_runs(project_id: str | None = None, limit: int = 40) -> list[dict
             int((event.get("usage") or {}).get("total_tokens") or 0) for event in events
         )
         metrics = report.get("metrics") or {}
+        capability = report.get("cpu_capability") or {}
+        benchmarks = ((report.get("performance") or {}).get("benchmarks") or [])
+        measured = [
+            item for item in benchmarks
+            if isinstance(item, dict)
+            and isinstance(item.get("cycles"), (int, float))
+            and isinstance(item.get("instructions"), (int, float))
+            and item["cycles"] > 0 and item["instructions"] > 0
+        ]
+        total_cycles = sum(float(item["cycles"]) for item in measured)
+        total_instructions = sum(float(item["instructions"]) for item in measured)
         summaries.append(
             {
                 "run_id": payload["run_id"],
@@ -688,6 +699,9 @@ def list_agent_runs(project_id: str | None = None, limit: int = 40) -> list[dict
                 "area": metrics.get("area"),
                 "area_unit": metrics.get("area_unit"),
                 "total_power_w": metrics.get("total_power_w") if metrics.get("power_status") == "ok" else None,
+                "cpu_level": capability.get("verified_level", capability.get("observed_level", capability.get("level"))),
+                "cpu_cpi": round(total_cycles / total_instructions, 6) if total_instructions else None,
+                "cpu_ipc": round(total_instructions / total_cycles, 6) if total_cycles else None,
                 "report_passed": report.get("passed"),
                 "error": payload.get("error"),
             }

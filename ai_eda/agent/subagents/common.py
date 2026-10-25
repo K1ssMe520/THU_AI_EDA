@@ -10,6 +10,7 @@ from typing import Any
 PARSER_SYSTEM_PROMPT = """You are the Spec Parser of a digital IC design agent.
 Decide whether the given design spec (plus any user supplements and previous parser addendum) is sufficient to implement and verify the design.
 If anything is missing or ambiguous (ports, protocol timing, reset, latency, file/module structure, test expectations), list it.
+If a port appears in the interface but its behavior or timing is not defined in the body of the spec, treat that port as missing and ask the user.
 
 Your job is to SUPPLEMENT and CORRECT the original spec, never to summarize or replace it.
 Keep every original requirement intact; any new or corrected requirement belongs in spec_addendum.
@@ -149,7 +150,12 @@ def report_summary(report: dict[str, Any] | None) -> str:
     if report is None:
         return "验证尚未执行。"
     if report.get("passed"):
-        return f"教师 TB 通过（{stage_label(report.get('stage'))}）。"
+        summary = f"教师 TB 通过（{stage_label(report.get('stage'))}）。"
+        capability = report.get("cpu_capability") or {}
+        level = capability.get("verified_level", capability.get("level"))
+        if level is not None:
+            summary += f" CPU 已验证层级：L{level}。"
+        return summary
     checks = report.get("checks") or []
     failed = "、".join(item.get("name", "检查") for item in checks[:4])
     suffix = f"，失败检查：{failed}" if failed else ""

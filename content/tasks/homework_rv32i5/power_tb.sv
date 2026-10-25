@@ -21,6 +21,17 @@ module tb_power_agent_rv32i5;
   logic        halted;
   logic [31:0] exit_code;
 
+`ifdef RV32I_FEATURE_PORTS
+  wire imem_valid;
+  wire imem_ready = 1'b1;
+  wire dmem_ready = 1'b1;
+  wire [2:0] dbg_features;
+  wire dbg_retire_valid;
+  wire [31:0] dbg_retire_pc, dbg_retire_insn;
+  wire dbg_bp_resolve, dbg_bp_mispredict;
+  wire dbg_ooo_issue, dbg_ooo_bypass;
+`endif
+
   rv32i5 dut (.*);
   always #5 clk = ~clk;
 

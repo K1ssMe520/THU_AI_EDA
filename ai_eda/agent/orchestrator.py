@@ -230,6 +230,9 @@ def run_agent(
             "parser_rounds": parser_result.get("rounds", 1),
             "supplements": parser_result.get("supplements", []),
             "tester_attempts": tester_attempts,
+            "cpu_capability": final_report.get("cpu_capability"),
+            "test_suites": final_report.get("test_suites"),
+            "performance": final_report.get("performance"),
         }
         _write_json(run_dir / "result.json", final_result)
         current_status = "passed" if passed else "failed"

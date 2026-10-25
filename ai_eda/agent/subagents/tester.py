@@ -58,6 +58,9 @@ class TesterAgent(SubAgent):
             rtl_path=combined_path,
             power_testbench_path=project["power_testbench_path"],
             power_testbench_top=project["power_testbench_top"],
+            expected_cpu_level=project.get("expected_cpu_level"),
+            rtl_top_module=plan.get("top_module"),
+            timeout_seconds=int(project.get("timeout_seconds", 20)),
             run_dir=tester_dir,
         )
         self.check_cancel()

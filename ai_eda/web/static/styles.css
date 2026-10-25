@@ -724,9 +724,34 @@ kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4p
 .dft-bar.dc { background: linear-gradient(180deg, #29a37e, #0f8b6d); }
 .dft-bin-label { color: var(--muted); font: 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .dft-bin-value { max-width: 100%; overflow: hidden; color: var(--dim); font: 8px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; }
-.agent-verify-visual { max-height: 300px; overflow: auto; overscroll-behavior: contain; border-top: 1px solid var(--line-soft); background: var(--surface); }
+.agent-verify-visual { max-height: 520px; overflow: auto; overscroll-behavior: contain; border-top: 1px solid var(--line-soft); background: var(--surface); }
 .agent-verify-visual .trace-wrap { max-height: 210px; border-top: 0; }
 .agent-verify-visual .raw-output pre { max-height: 160px; }
+.agent-cpu-summary { margin: 10px 12px; border: 1px solid var(--line-soft); border-radius: 9px; overflow: hidden; background: var(--surface-soft); }
+.cpu-report-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--line-soft); background: #edf8f4; }
+.cpu-report-head strong { color: var(--accent-dark); font-size: 11px; }
+.cpu-report-head span { color: var(--dim); font-size: 9px; }
+.cpu-report-section { padding: 9px 10px; border-bottom: 1px solid var(--line-soft); }
+.cpu-report-section:last-child { border-bottom: 0; }
+.cpu-report-section h4 { margin: 0 0 7px; color: var(--dim); font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.cpu-capability-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 5px; }
+.cpu-capability-grid > div { min-width: 0; border: 1px solid var(--line-soft); border-radius: 6px; padding: 5px 6px; background: var(--surface); }
+.cpu-capability-grid span, .cpu-capability-grid b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cpu-capability-grid span { color: var(--dim); font-size: 8px; }
+.cpu-capability-grid b { margin-top: 2px; color: var(--text); font-size: 10px; }
+.cpu-suite-list { display: grid; gap: 4px; }
+.cpu-suite { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 7px; border-radius: 5px; padding: 5px 6px; background: var(--surface); }
+.cpu-suite strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.cpu-suite span { border-radius: 99px; padding: 1px 5px; font-size: 8px; font-weight: 800; }
+.cpu-suite small { color: var(--dim); font-size: 9px; }
+.cpu-suite.pass span { color: var(--accent-dark); background: var(--accent-soft); }
+.cpu-suite.fail span { color: var(--red); background: var(--red-soft); }
+.cpu-suite.skip span { color: var(--muted); background: var(--surface-strong); }
+.cpu-performance-table { width: 100%; border-collapse: collapse; font: 9px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.cpu-performance-table th, .cpu-performance-table td { padding: 4px 5px; border-bottom: 1px solid var(--line-soft); text-align: right; }
+.cpu-performance-table th:first-child, .cpu-performance-table td:first-child { max-width: 120px; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.cpu-performance-table th { color: var(--dim); font-weight: 700; }
+.cpu-performance-table tr:last-child td { border-bottom: 0; }
 .agent-trace-table td:nth-child(5) { color: var(--dim); }
 .agent-trace-table tr.mismatch td { background: var(--red-soft); }
 
